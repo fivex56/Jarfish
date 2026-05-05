@@ -271,25 +271,98 @@ class IdeaGenerator:
                 data = r.json()
                 text = data["choices"][0]["message"]["content"].strip()
 
+                # Remove markdown code fences if present
+                if text.startswith("```"):
+                    fence_end = text.find("\n")
+                    text = text[fence_end + 1:] if fence_end != -1 else text[3:]
+                if text.endswith("```"):
+                    text = text[:-3]
+                text = text.strip()
+
                 # Extract JSON from response
                 json_start = text.find("{")
                 json_end = text.rfind("}") + 1
                 if json_start != -1 and json_end > json_start:
-                    try:
-                        return json.loads(text[json_start:json_end])
-                    except json.JSONDecodeError:
-                        # Try to fix common JSON issues from LLM output
-                        json_str = text[json_start:json_end]
-                        # Fix trailing commas before }
-                        import re
-                        json_str = re.sub(r',\s*}', '}', json_str)
-                        # Fix trailing commas before ]
-                        json_str = re.sub(r',\s*]', ']', json_str)
-                        try:
-                            return json.loads(json_str)
-                        except json.JSONDecodeError:
-                            pass
-                return {"ideas": [], "summary": text}
+                    json_str = text[json_start:json_end]
+                    result = self._try_parse_json(json_str)
+                    if result and (result.get("ideas") or result.get("big_ideas")):
+                        return result
+                    # If failed, return the raw text as summary so we at least see it
+                    return {"ideas": [], "summary": text[:500]}
+
+                return {"ideas": [], "summary": text[:500]}
         except Exception as e:
             logger.error(f"DeepSeek call failed: {e}")
             return {"ideas": [], "summary": f"Ошибка генерации: {e}"}
+
+    @staticmethod
+    def _try_parse_json(json_str: str) -> dict | None:
+        """Try multiple strategies to parse potentially malformed JSON from LLM."""
+        import re
+
+        # Strategy 1: direct parse
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            pass
+
+        # Strategy 2: fix trailing commas
+        try:
+            fixed = re.sub(r',\s*}', '}', json_str)
+            fixed = re.sub(r',\s*]', ']', fixed)
+            return json.loads(fixed)
+        except (json.JSONDecodeError, Exception):
+            pass
+
+        # Strategy 3: fix unescaped newlines inside strings
+        try:
+            fixed = IdeaGenerator._fix_json_newlines(json_str)
+            return json.loads(fixed)
+        except (json.JSONDecodeError, Exception):
+            pass
+
+        # Strategy 4: extract ideas array via regex
+        try:
+            ideas_match = re.search(r'"ideas"\s*:\s*\[(.*)\]', json_str, re.DOTALL)
+            summary_match = re.search(r'"summary"\s*:\s*"([^"]*)"', json_str)
+            if ideas_match:
+                return {
+                    "ideas": [{"title": "Извлечённая идея", "what": ideas_match.group(1)[:500]}],
+                    "summary": summary_match.group(1) if summary_match else "Извлечено из текста"
+                }
+        except Exception:
+            pass
+
+        return None
+
+    @staticmethod
+    def _fix_json_newlines(json_str: str) -> str:
+        """Fix unescaped newlines inside JSON string values."""
+        import re
+        result = []
+        in_string = False
+        escape_next = False
+        for ch in json_str:
+            if escape_next:
+                result.append(ch)
+                escape_next = False
+                continue
+            if ch == '\\':
+                result.append(ch)
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                result.append(ch)
+                continue
+            if in_string and ch == '\n':
+                result.append('\\n')
+                continue
+            if in_string and ch == '\r':
+                result.append('\\r')
+                continue
+            if in_string and ch == '\t':
+                result.append('\\t')
+                continue
+            result.append(ch)
+        return ''.join(result)

@@ -74,6 +74,20 @@ CREATE TABLE IF NOT EXISTS thoughts (
 
 CREATE INDEX IF NOT EXISTS idx_thoughts_date ON thoughts(created_at);
 
+CREATE TABLE IF NOT EXISTS ideas (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    round           TEXT NOT NULL DEFAULT 'generation',
+    agent           TEXT NOT NULL DEFAULT 'generator',
+    content         TEXT NOT NULL,
+    parent_id       INTEGER REFERENCES ideas(id) ON DELETE SET NULL,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ideas_round ON ideas(round);
+CREATE INDEX IF NOT EXISTS idx_ideas_status ON ideas(status);
+CREATE INDEX IF NOT EXISTS idx_ideas_parent ON ideas(parent_id);
+
 CREATE VIEW IF NOT EXISTS v_overdue_tasks AS
 SELECT t.*, p.name AS project_name
 FROM tasks t

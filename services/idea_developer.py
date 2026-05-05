@@ -208,7 +208,7 @@ class IdeaDeveloper:
                 {"role": "user", "content": prompt}
             ],
             "temperature": temperature,
-            "max_tokens": 2500
+            "max_tokens": 4000
         }
 
         try:

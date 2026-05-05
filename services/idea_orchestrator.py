@@ -295,7 +295,7 @@ class IdeaOrchestrator:
         logger.info("=== Weekly review completed ===")
 
     async def _notify(self, text: str, parse_mode: str | None = None):
-        """Send message to user via out_queue and Telegram."""
+        """Send message to user via out_queue and Telegram, splitting if needed."""
         logger.info(f"Agent notification: {text[:100]}...")
         if self.out_queue:
             await self.out_queue.put({"text": text, "source": "agent"})
@@ -312,14 +312,45 @@ class IdeaOrchestrator:
                         break
 
             if token and self.user_id:
-                body = {"chat_id": self.user_id, "text": text}
-                if parse_mode:
-                    body["parse_mode"] = parse_mode
+                # Split long messages (Telegram limit: 4096 chars)
+                max_len = 4000
+                chunks = []
+                if len(text) <= max_len:
+                    chunks = [text]
+                else:
+                    # Split by paragraphs first, then by lines
+                    paragraphs = text.split("\n\n")
+                    current = ""
+                    for para in paragraphs:
+                        if len(current) + len(para) + 2 <= max_len:
+                            current = (current + "\n\n" + para) if current else para
+                        else:
+                            if current:
+                                chunks.append(current)
+                            if len(para) <= max_len:
+                                current = para
+                            else:
+                                # Split long paragraph by lines
+                                lines = para.split("\n")
+                                current = ""
+                                for line in lines:
+                                    if len(current) + len(line) + 1 <= max_len:
+                                        current = (current + "\n" + line) if current else line
+                                    else:
+                                        if current:
+                                            chunks.append(current)
+                                        current = line
+                    if current:
+                        chunks.append(current)
 
-                async with httpx.AsyncClient(timeout=10) as client:
-                    await client.post(
-                        f"https://api.telegram.org/bot{token}/sendMessage",
-                        json=body
-                    )
+                async with httpx.AsyncClient(timeout=15) as client:
+                    for chunk in chunks:
+                        body = {"chat_id": self.user_id, "text": chunk}
+                        if parse_mode:
+                            body["parse_mode"] = parse_mode
+                        await client.post(
+                            f"https://api.telegram.org/bot{token}/sendMessage",
+                            json=body
+                        )
         except Exception as e:
             logger.error(f"Failed to send agent TG message: {e}")

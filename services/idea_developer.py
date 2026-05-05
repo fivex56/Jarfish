@@ -196,7 +196,7 @@ class IdeaDeveloper:
             return f"Ошибка генерации кода: {e}"
 
     async def _call_deepseek(self, prompt: str, temperature: float = 0.5) -> dict:
-        """Call DeepSeek API."""
+        """Call DeepSeek API and parse JSON response."""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -221,21 +221,71 @@ class IdeaDeveloper:
                 data = r.json()
                 text = data["choices"][0]["message"]["content"].strip()
 
+                # Remove markdown code fences
+                if text.startswith("```"):
+                    fence_end = text.find("\n")
+                    text = text[fence_end + 1:] if fence_end != -1 else text[3:]
+                if text.endswith("```"):
+                    text = text[:-3]
+                text = text.strip()
+
                 json_start = text.find("{")
                 json_end = text.rfind("}") + 1
                 if json_start != -1 and json_end > json_start:
-                    try:
-                        return json.loads(text[json_start:json_end])
-                    except json.JSONDecodeError:
-                        import re
-                        json_str = text[json_start:json_end]
-                        json_str = re.sub(r',\s*}', '}', json_str)
-                        json_str = re.sub(r',\s*]', ']', json_str)
-                        try:
-                            return json.loads(json_str)
-                        except json.JSONDecodeError:
-                            pass
-                return {"reviews": [], "summary": text}
+                    json_str = text[json_start:json_end]
+                    result = self._try_parse_json(json_str)
+                    if result and (result.get("reviews") or result.get("summary")):
+                        return result
+
+                return {"reviews": [], "summary": text[:500]}
         except Exception as e:
             logger.error(f"DeepSeek call failed: {e}")
             return {"reviews": [], "summary": f"Ошибка: {e}"}
+
+    @staticmethod
+    def _try_parse_json(json_str: str) -> dict | None:
+        """Try multiple strategies to parse potentially malformed JSON from LLM."""
+        import re
+
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            pass
+
+        try:
+            fixed = re.sub(r',\s*}', '}', json_str)
+            fixed = re.sub(r',\s*]', ']', fixed)
+            return json.loads(fixed)
+        except (json.JSONDecodeError, Exception):
+            pass
+
+        # Fix unescaped newlines inside strings
+        try:
+            result = []
+            in_string = False
+            escape_next = False
+            for ch in json_str:
+                if escape_next:
+                    result.append(ch)
+                    escape_next = False
+                    continue
+                if ch == '\\':
+                    result.append(ch)
+                    escape_next = True
+                    continue
+                if ch == '"':
+                    in_string = not in_string
+                    result.append(ch)
+                    continue
+                if in_string and ch == '\n':
+                    result.append('\\n')
+                    continue
+                if in_string and ch == '\r':
+                    result.append('\\r')
+                    continue
+                result.append(ch)
+            return json.loads(''.join(result))
+        except (json.JSONDecodeError, Exception):
+            pass
+
+        return None

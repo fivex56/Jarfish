@@ -33,14 +33,13 @@ class IdeaOrchestrator:
         self._last_cycle_date = None
 
     async def run_cycle(self):
-        """Run a full 2-day idea cycle. Called daily, runs only if 2+ days passed."""
+        """Run a full 2-day idea cycle. Never hangs — errors at any step are caught and reported."""
         today = datetime.now().strftime("%Y-%m-%d")
 
         if self._last_cycle_date == today:
             logger.info("Cycle already ran today, skipping")
             return
 
-        # Check if 2 days have passed since last run
         if self._last_cycle_date:
             last = datetime.strptime(self._last_cycle_date, "%Y-%m-%d")
             delta = (datetime.now() - last).days
@@ -50,6 +49,17 @@ class IdeaOrchestrator:
 
         self._last_cycle_date = today
         logger.info("=== Agent cycle started ===")
+
+        try:
+            await self._run_steps()
+        except Exception as e:
+            logger.error(f"Cycle crashed: {e}", exc_info=True)
+            try:
+                await self._notify(f"⚠️ Цикл саморазвития упал с ошибкой: {str(e)[:300]}\nСледующая попытка через 2 дня.")
+            except Exception:
+                pass
+
+    async def _run_steps(self):
 
         # --- Step 1: Generator analyses & brainstorms ---
         await self._notify("🧠 Агент-Генератор начал анализ проекта и поиск идей...")
@@ -74,18 +84,22 @@ class IdeaOrchestrator:
             )
 
         # Notify user about initial ideas
-        ideas_preview = "\n".join(
-            f"• {i.get('title', '?')} ({i.get('impact', '?')} impact, {i.get('effort', '?')} effort)"
-            for i in ideas[:7]
-        )
-        await self._notify(
-            f"💡 Генератор придумал {len(ideas)} идей:\n\n{ideas_preview}\n\n"
-            f"_{summary}_\n\n"
-            f"🔄 Передаю Разработчику на ревью..."
-        )
-
-        if not ideas:
-            await self._notify("⚠️ Генератор не смог придумать идей. Цикл прерван.")
+        if ideas:
+            ideas_preview = "\n".join(
+                f"• {i.get('title', '?')} ({i.get('impact', '?')} impact, {i.get('effort', '?')} effort)"
+                for i in ideas[:7]
+            )
+            await self._notify(
+                f"💡 Генератор придумал {len(ideas)} идей:\n\n{ideas_preview}\n\n"
+                f"_{summary}_\n\n"
+                f"🔄 Передаю Разработчику на ревью..."
+            )
+        else:
+            await self._notify(
+                f"⚠️ Генератор не смог придумать структурированных идей.\n"
+                f"Ответ ИИ: {summary[:400]}\n\n"
+                f"Цикл прерван — следующая попытка через 2 дня."
+            )
             return
 
         # --- Step 2: Developer reviews ---

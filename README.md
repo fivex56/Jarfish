@@ -46,5 +46,5 @@
 
 ### 1. Склонируй мощь
 ```bash
-git clone [https://github.com/твой-юзернейм/jarfish.git](https://github.com/твой-юзернейм/jarfish.git) && cd jarfish
+git clone https://github.com/fivex56/Jarfish.git && cd Jarfish
 pip install -r requirements.txt

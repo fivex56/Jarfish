@@ -1,0 +1,8 @@
+python-telegram-bot[job-queue]>=21.9
+aiosqlite
+httpx
+openai-whisper
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2
+colorama

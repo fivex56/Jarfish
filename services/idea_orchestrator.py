@@ -263,7 +263,7 @@ class IdeaOrchestrator:
             f"Сгенерировано идей: {len(ideas)}\n"
             f"Одобрено: {len(approved)}\n"
             f"Отклонено: {len(rejected)}\n"
-            f"Попыток внедрения: {len(high_impact_simple[:3])}\n\n"
+            f"Попыток внедрения: {len(implementable[:2])}\n\n"
             f"Следующий цикл — через 2 дня."
         )
 

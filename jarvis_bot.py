@@ -19,7 +19,6 @@ from services.speech import SpeechService
 from services.vision import VisionService
 from services.nl_parser import NLParser
 from services.calendar_service import CalendarService
-from services.idea_agent import IdeaAgent
 
 # Configure logging
 logging.basicConfig(
@@ -271,20 +270,38 @@ async def main():
         )
         logger.info("Daily affirmation scheduled at 09:00")
 
-    # Start daily idea agent (analyzes logs + project, sends suggestions)
+    # Start 2-agent self-improvement system (every 2 days + weekly review)
     if deepseek_key:
-        idea_agent = IdeaAgent(deepseek_key, str(Path(__file__).parent), bot_to_cli, config["allowed_user_id"])
+        from services.idea_orchestrator import IdeaOrchestrator
 
-        async def daily_ideas(context):
-            await idea_agent.analyze_and_suggest()
-
-        app.job_queue.run_daily(
-            daily_ideas,
-            time=time(hour=12, minute=0),
-            days=(0, 1, 2, 3, 4, 5, 6),
-            name="daily_ideas"
+        orchestrator = IdeaOrchestrator(
+            deepseek_key, str(Path(__file__).parent), repo,
+            bot_to_cli, config["allowed_user_id"]
         )
-        logger.info("IdeaAgent scheduled daily at 12:00")
+
+        async def biweekly_cycle(context):
+            await orchestrator.run_cycle()
+
+        async def weekly_review(context):
+            await orchestrator.run_weekly_review()
+
+        # Check daily at 11:00 — orchestrator decides if 2 days passed
+        app.job_queue.run_daily(
+            biweekly_cycle,
+            time=time(hour=11, minute=0),
+            days=(0, 1, 2, 3, 4, 5, 6),
+            name="idea_cycle"
+        )
+        logger.info("IdeaOrchestrator cycle check scheduled daily at 11:00")
+
+        # Weekly global review on Monday at 10:00
+        app.job_queue.run_daily(
+            weekly_review,
+            time=time(hour=10, minute=0),
+            days=(0,),  # Monday
+            name="weekly_review"
+        )
+        logger.info("IdeaOrchestrator weekly review scheduled on Mondays at 10:00")
 
     # Start polling
     await app.updater.start_polling()

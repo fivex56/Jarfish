@@ -24,7 +24,7 @@ class Database:
             schema_path = Path(__file__).parent / "schema.sql"
             schema = schema_path.read_text(encoding="utf-8")
             await self.conn.executescript(schema)
-            await self.conn.execute("PRAGMA user_version = 3")
+            await self.conn.execute("PRAGMA user_version = 4")
             await self.conn.commit()
         elif version == 1:
             await self.conn.execute("ALTER TABLE tasks ADD COLUMN emoji TEXT DEFAULT ''")
@@ -40,6 +40,21 @@ class Database:
             )""")
             await self.conn.execute("CREATE INDEX IF NOT EXISTS idx_thoughts_date ON thoughts(created_at)")
             await self.conn.execute("PRAGMA user_version = 3")
+            await self.conn.commit()
+        if version <= 3:
+            await self.conn.execute("""CREATE TABLE IF NOT EXISTS ideas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                round TEXT NOT NULL DEFAULT 'generation',
+                agent TEXT NOT NULL DEFAULT 'generator',
+                content TEXT NOT NULL,
+                parent_id INTEGER REFERENCES ideas(id) ON DELETE SET NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )""")
+            await self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ideas_round ON ideas(round)")
+            await self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ideas_status ON ideas(status)")
+            await self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ideas_parent ON ideas(parent_id)")
+            await self.conn.execute("PRAGMA user_version = 4")
             await self.conn.commit()
 
     async def close(self):

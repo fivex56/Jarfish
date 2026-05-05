@@ -201,6 +201,51 @@ class Repository:
                 "SELECT * FROM thoughts ORDER BY created_at DESC LIMIT ?", (limit,))
         return [dict(r) for r in rows]
 
+    # ── Ideas (agent-generated improvements) ─────────────────
+
+    async def create_idea(self, content: str, round: str = "generation",
+                          agent: str = "generator", parent_id: int | None = None,
+                          status: str = "pending") -> dict:
+        sql = "INSERT INTO ideas (content, round, agent, parent_id, status) VALUES (?, ?, ?, ?, ?)"
+        cur = await self.db.execute(sql, (content, round, agent, parent_id, status))
+        await self.db.commit()
+        return await self.get_idea(cur.lastrowid)
+
+    async def get_idea(self, idea_id: int) -> dict | None:
+        row = await self.db.fetch_one("SELECT * FROM ideas WHERE id = ?", (idea_id,))
+        return dict(row) if row else None
+
+    async def list_ideas(self, round: str | None = None, status: str | None = None,
+                         limit: int = 50) -> list[dict]:
+        sql = "SELECT * FROM ideas WHERE 1=1"
+        params = []
+        if round:
+            sql += " AND round = ?"
+            params.append(round)
+        if status:
+            sql += " AND status = ?"
+            params.append(status)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = await self.db.fetch_all(sql, params)
+        return [dict(r) for r in rows]
+
+    async def update_idea(self, idea_id: int, **kwargs) -> dict | None:
+        if not kwargs:
+            return await self.get_idea(idea_id)
+        sets = ", ".join(f"{k} = ?" for k in kwargs)
+        values = list(kwargs.values()) + [idea_id]
+        await self.db.execute(f"UPDATE ideas SET {sets} WHERE id = ?", values)
+        await self.db.commit()
+        return await self.get_idea(idea_id)
+
+    async def get_idea_chain(self, parent_id: int) -> list[dict]:
+        """Get all ideas in a chain (parent → children)."""
+        rows = await self.db.fetch_all(
+            "SELECT * FROM ideas WHERE id = ? OR parent_id = ? ORDER BY created_at ASC",
+            (parent_id, parent_id))
+        return [dict(r) for r in rows]
+
     async def get_thought_dates(self, limit: int = 14) -> list[str]:
         rows = await self.db.fetch_all(
             "SELECT DISTINCT date(created_at) as d FROM thoughts ORDER BY d DESC LIMIT ?",

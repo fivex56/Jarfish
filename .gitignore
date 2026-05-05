@@ -1,0 +1,16 @@
+# Secrets — NEVER commit
+.env
+google_token.pickle
+oauth_google.json
+
+# User data
+jarvis.db
+jarvis.db-shm
+jarvis.db-wal
+jarvis.log
+thoughts_images/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo

@@ -224,7 +224,17 @@ class IdeaDeveloper:
                 json_start = text.find("{")
                 json_end = text.rfind("}") + 1
                 if json_start != -1 and json_end > json_start:
-                    return json.loads(text[json_start:json_end])
+                    try:
+                        return json.loads(text[json_start:json_end])
+                    except json.JSONDecodeError:
+                        import re
+                        json_str = text[json_start:json_end]
+                        json_str = re.sub(r',\s*}', '}', json_str)
+                        json_str = re.sub(r',\s*]', ']', json_str)
+                        try:
+                            return json.loads(json_str)
+                        except json.JSONDecodeError:
+                            pass
                 return {"reviews": [], "summary": text}
         except Exception as e:
             logger.error(f"DeepSeek call failed: {e}")

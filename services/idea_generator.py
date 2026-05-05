@@ -275,7 +275,20 @@ class IdeaGenerator:
                 json_start = text.find("{")
                 json_end = text.rfind("}") + 1
                 if json_start != -1 and json_end > json_start:
-                    return json.loads(text[json_start:json_end])
+                    try:
+                        return json.loads(text[json_start:json_end])
+                    except json.JSONDecodeError:
+                        # Try to fix common JSON issues from LLM output
+                        json_str = text[json_start:json_end]
+                        # Fix trailing commas before }
+                        import re
+                        json_str = re.sub(r',\s*}', '}', json_str)
+                        # Fix trailing commas before ]
+                        json_str = re.sub(r',\s*]', ']', json_str)
+                        try:
+                            return json.loads(json_str)
+                        except json.JSONDecodeError:
+                            pass
                 return {"ideas": [], "summary": text}
         except Exception as e:
             logger.error(f"DeepSeek call failed: {e}")

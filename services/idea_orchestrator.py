@@ -178,21 +178,36 @@ class IdeaOrchestrator:
             all_approved = approved
 
         # --- Step 4: Developer attempts implementation ---
-        high_impact_simple = [
-            i for i in all_approved
-            if isinstance(i, dict) and i.get("impact") in ("high", "medium")
-               and i.get("effort") == "low"
-        ]
+        # Take all approved ideas, heavy ones go to weekly review, low+medium get implemented now
+        effort_order = {"low": 0, "medium": 1, "high": 99}
+        impact_order = {"high": 0, "medium": 1, "low": 2}
 
-        if high_impact_simple:
-            await self._notify(f"🔨 Разработчик пробует внедрить {len(high_impact_simple)} идей...")
-            logger.info(f"Step 4: Developer implementing {len(high_impact_simple)} ideas")
+        # Split: implement low+medium now, save heavy for weekly review
+        for_impl = [i for i in all_approved if isinstance(i, dict) and i.get("effort") != "high"]
+        for_weekly = [i for i in all_approved if isinstance(i, dict) and i.get("effort") == "high"]
 
-            for idea in high_impact_simple[:3]:  # Max 3 per cycle
+        if for_weekly:
+            heavy_titles = ", ".join(i.get("title", "?") for i in for_weekly)
+            await self._notify(f"📦 Тяжёлые идеи отложены на еженедельный обзор: {heavy_titles}")
+
+        implementable = sorted(
+            for_impl,
+            key=lambda i: (effort_order.get(i.get("effort", "medium"), 1),
+                           impact_order.get(i.get("impact", "low"), 2))
+        )
+
+        if implementable:
+            await self._notify(f"🔨 Разработчик внедряет {len(implementable[:2])} идей (лёгкие и средние)...")
+            logger.info(f"Step 4: Developer implementing {len(implementable[:2])} ideas")
+
+            for idea in implementable[:2]:  # Max 2 per cycle
                 matching_review = next(
                     (r for r in reviews if r.get("idea_title") == idea.get("title")),
-                    {"verdict": "approved", "implementation_plan": idea.get("how", "")}
+                    {"verdict": "approved", "implementation_plan": idea.get("how", ""),
+                     "feedback": "Одобрено к внедрению"}
                 )
+
+                await self._notify(f"🔧 Внедряю: {idea.get('title', '?')} (сложность: {idea.get('effort', '?')})...")
 
                 impl_result = await self.developer.implement(idea, matching_review)
 
@@ -220,9 +235,13 @@ class IdeaOrchestrator:
                                        cwd=str(root), capture_output=True, timeout=15)
                         subprocess.run(["git", "push"], cwd=str(root),
                                        capture_output=True, timeout=15)
-                        await self._notify(f"✅ Внедрено: {idea.get('title', '?')}")
+                        await self._notify(f"✅ Внедрено и залито на гитхаб: {idea.get('title', '?')}")
+                    else:
+                        await self._notify(f"📝 Для «{idea.get('title', '?')}» сгенерирован план внедрения, лежит в базе идей")
                 except Exception as e:
                     logger.warning(f"Git operation failed: {e}")
+        else:
+            await self._notify("⚠️ Нет идей для немедленного внедрения (все тяжёлые — уйдут в еженедельный обзор)")
 
         # --- Final cycle report ---
         await self._notify(

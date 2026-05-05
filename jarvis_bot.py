@@ -4,6 +4,7 @@ import os
 import signal
 import sys
 from datetime import datetime, time, timedelta
+from pathlib import Path
 
 from telegram.ext import Application
 
@@ -238,6 +239,30 @@ async def main():
                 await context.bot.send_message(chat_id=user_id, text=f"🧠 {text}")
                 logger.info(f"Daily affirmation sent")
 
+                # Update README.md with the new wisdom
+                readme_path = Path(__file__).parent / "README.md"
+                try:
+                    lines = readme_path.read_text(encoding="utf-8").splitlines()
+                    new_lines = []
+                    for line in lines:
+                        if line.startswith("> **«") and line.endswith("».**"):
+                            new_lines.append(f"> **«{text}».**")
+                        else:
+                            new_lines.append(line)
+                    readme_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+                    # Commit and push
+                    import subprocess
+                    subprocess.run(["git", "add", "README.md"], cwd=str(readme_path.parent), capture_output=True)
+                    subprocess.run(
+                        ["git", "commit", "-m", f"Daily wisdom: {text[:50]}" + ("..." if len(text) > 50 else "")],
+                        cwd=str(readme_path.parent), capture_output=True
+                    )
+                    subprocess.run(["git", "push"], cwd=str(readme_path.parent), capture_output=True)
+                    logger.info(f"README updated with daily wisdom")
+                except Exception as e:
+                    logger.error(f"Failed to update README with wisdom: {e}")
+
         app.job_queue.run_daily(
             daily_affirmation,
             time=time(hour=9, minute=0),
@@ -248,7 +273,6 @@ async def main():
 
     # Start daily idea agent (analyzes logs + project, sends suggestions)
     if deepseek_key:
-        from pathlib import Path
         idea_agent = IdeaAgent(deepseek_key, str(Path(__file__).parent), bot_to_cli, config["allowed_user_id"])
 
         async def daily_ideas(context):

@@ -1,4 +1,5 @@
 import logging
+import os
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters
@@ -30,6 +31,7 @@ class BotHandlers:
         self.calendar = calendar_service
         self._pending_intents = {}  # user_id -> parsed dict awaiting confirmation
         self._edit_state = {}      # user_id -> edit state dict
+        self._voice_mode = {}      # user_id -> bool: озвучивать ответы голосом
 
     def is_allowed(self, user_id: int) -> bool:
         return user_id == self.allowed_user_id
@@ -66,6 +68,20 @@ class BotHandlers:
             return
         text = await self.processor.help()
         await self._respond(update, text)
+
+    async def handle_voice_on(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.is_allowed(update.effective_user.id):
+            return
+        user_id = update.effective_user.id
+        self._voice_mode[user_id] = True
+        await update.message.reply_text("Голосовой режим включён. Ответы будут озвучиваться.")
+
+    async def handle_voice_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.is_allowed(update.effective_user.id):
+            return
+        user_id = update.effective_user.id
+        self._voice_mode[user_id] = False
+        await update.message.reply_text("Голосовой режим выключен. Ответы будут текстом.")
 
     async def handle_task_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_allowed(update.effective_user.id):
@@ -344,10 +360,10 @@ class BotHandlers:
                     parsed = await self.nl.parse(text)
                 except Exception as e:
                     logger.error(f"LLM parse failed: {e}")
-                    await self._respond(update, f"Записал: {text[:150]}")
+                    await self._reply_or_voice(update, f"Записал: {text[:150]}")
                     return
             else:
-                await self._respond(update, f"Записал: {text[:150]}")
+                await self._reply_or_voice(update, f"Записал: {text[:150]}")
                 return
 
             # Save to memory
@@ -375,7 +391,7 @@ class BotHandlers:
             if query_data:
                 reply = reply + "\n\n" + query_data if reply else query_data
             if reply:
-                await self._respond(update, reply)
+                await self._reply_or_voice(update, reply)
         else:
             await update.message.reply_text("Не удалось распознать речь")
 
@@ -701,6 +717,23 @@ class BotHandlers:
             await self.out_queue.put({"text": part, "source": "jarvis"})
             await self.processor.repo.save_message("out", part, "jarvis")
 
+    async def _reply_or_voice(self, update: Update, text: str):
+        """Send text or voice response depending on voice_mode setting."""
+        user_id = update.effective_user.id
+        if self._voice_mode.get(user_id) and self.speech:
+            try:
+                ogg_path = await self.speech.synthesize(text)
+                with open(ogg_path, "rb") as f:
+                    await update.message.reply_voice(f, caption=text[:200])
+                os.unlink(ogg_path)
+                await self.out_queue.put({"text": text, "source": "jarvis"})
+                await self.processor.repo.save_message("out", text, "jarvis")
+            except Exception as e:
+                logger.error(f"TTS failed, falling back to text: {e}")
+                await self._respond(update, text)
+        else:
+            await self._respond(update, text)
+
     def register(self, app):
         """Register all handlers on the PTB Application."""
         app.add_handler(CommandHandler("start", self.handle_start))
@@ -719,6 +752,8 @@ class BotHandlers:
         app.add_handler(CommandHandler("notes", self.handle_notes))
         app.add_handler(CommandHandler("summary", self.handle_summary))
         app.add_handler(CommandHandler("overdue", self.handle_overdue))
+        app.add_handler(CommandHandler("voice_on", self.handle_voice_on))
+        app.add_handler(CommandHandler("voice_off", self.handle_voice_off))
         # Voice and photo handlers
         app.add_handler(MessageHandler(filters.VOICE, self.handle_voice))
         app.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))

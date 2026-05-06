@@ -61,7 +61,22 @@ def build_main_menu() -> InlineKeyboardMarkup:
             InlineKeyboardButton("📁 Проекты", callback_data="view_projects"),
             InlineKeyboardButton("💭 Мысли", callback_data="view_thoughts"),
         ],
-        [InlineKeyboardButton("📊 Сводка", callback_data="view_summary")],
+        [
+            InlineKeyboardButton("🎤 Голос", callback_data="voice_settings"),
+            InlineKeyboardButton("📊 Сводка", callback_data="view_summary"),
+        ],
+    ])
+
+
+def build_voice_settings_keyboard(voice_mode: bool = False, lang: str = "ru") -> InlineKeyboardMarkup:
+    """Voice settings: language, voice response toggle, send voice hint."""
+    voice_label = "🔊 Ответы голосом: ВКЛ" if voice_mode else "🔇 Ответы голосом: ВЫКЛ"
+    lang_label = f"🌐 Язык: {'Русский' if lang == 'ru' else 'English'}"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(lang_label, callback_data="voice_lang")],
+        [InlineKeyboardButton(voice_label, callback_data="voice_toggle")],
+        [InlineKeyboardButton("🎤 Отправить голосовое", callback_data="voice_info")],
+        [InlineKeyboardButton("◀ В меню", callback_data="menu")],
     ])
 
 
@@ -576,6 +591,55 @@ async def handle_menu_callbacks(handlers, update, context):
                 [InlineKeyboardButton("🏠 В меню", callback_data="menu")],
             ])
             await query.edit_message_text(summary, reply_markup=keyboard, parse_mode="HTML")
+
+        # ── Voice settings ──
+        elif data == "voice_settings":
+            voice_mode = handlers._voice_mode.get(user_id, False)
+            lang = handlers._voice_mode.get("_voice_lang", "ru")
+            await query.edit_message_text(
+                "<b>🎤 Голосовое управление</b>\n\n"
+                "• Отправь голосовое сообщение — я расшифрую и выполню как команду\n"
+                "• Нажми 🎤 в Telegram рядом с полем ввода\n"
+                "• Настрой язык распознавания и голосовые ответы ниже:",
+                reply_markup=build_voice_settings_keyboard(voice_mode, lang),
+                parse_mode="HTML"
+            )
+
+        elif data == "voice_toggle":
+            current = handlers._voice_mode.get(user_id, False)
+            handlers._voice_mode[user_id] = not current
+            handlers._save_voice_settings()
+            await query.answer(f"Голосовые ответы: {'ВКЛ' if not current else 'ВЫКЛ'}")
+            lang = handlers._voice_mode.get("_voice_lang", "ru")
+            await query.edit_message_text(
+                "<b>🎤 Голосовое управление</b>\n\n"
+                "• Отправь голосовое сообщение — я расшифрую и выполню как команду\n"
+                "• Нажми 🎤 в Telegram рядом с полем ввода",
+                reply_markup=build_voice_settings_keyboard(not current, lang),
+                parse_mode="HTML"
+            )
+
+        elif data == "voice_lang":
+            current_lang = handlers._voice_mode.get("_voice_lang", "ru")
+            new_lang = "en" if current_lang == "ru" else "ru"
+            handlers._voice_mode["_voice_lang"] = new_lang
+            handlers._save_voice_settings()
+            await query.answer(f"Язык: {'English' if new_lang == 'en' else 'Русский'}")
+            voice_mode = handlers._voice_mode.get(user_id, False)
+            await query.edit_message_text(
+                "<b>🎤 Голосовое управление</b>\n\n"
+                "• Отправь голосовое сообщение — я расшифрую и выполню как команду\n"
+                "• Нажми 🎤 в Telegram рядом с полем ввода",
+                reply_markup=build_voice_settings_keyboard(voice_mode, new_lang),
+                parse_mode="HTML"
+            )
+
+        elif data == "voice_info":
+            await query.answer(
+                "Нажми и удерживай значок 🎤 в Telegram чтобы записать голосовое сообщение. "
+                "Я автоматически расшифрую его и выполню как команду!",
+                show_alert=True
+            )
 
         # ── New task / project / reminder prompts ──
         elif data == "new_task":

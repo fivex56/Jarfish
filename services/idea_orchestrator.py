@@ -32,6 +32,12 @@ class IdeaOrchestrator:
         self._last_weekly = None
         self._last_cycle_date = None
 
+    async def force_cycle(self):
+        """Run a cycle immediately, ignoring the 2-day cooldown."""
+        logger.info("=== Agent cycle FORCED by user ===")
+        self._last_cycle_date = datetime.now().strftime("%Y-%m-%d")
+        await self._run_steps()
+
     async def run_cycle(self):
         """Run a full 2-day idea cycle. Never hangs — errors at any step are caught and reported."""
         today = datetime.now().strftime("%Y-%m-%d")
@@ -43,8 +49,8 @@ class IdeaOrchestrator:
         if self._last_cycle_date:
             last = datetime.strptime(self._last_cycle_date, "%Y-%m-%d")
             delta = (datetime.now() - last).days
-            if delta < 2:
-                logger.info(f"Last cycle was {delta} days ago, skipping (need 2+ days)")
+            if delta < 1:
+                logger.info(f"Last cycle was {delta} days ago, skipping")
                 return
 
         self._last_cycle_date = today

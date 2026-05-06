@@ -24,7 +24,7 @@ class IdeaOrchestrator:
     def __init__(self, deepseek_key: str, project_root: str, repo: Repository,
                  out_queue, user_id: int):
         self.generator = IdeaGenerator(deepseek_key, project_root, repo)
-        self.developer = IdeaDeveloper(deepseek_key, project_root, repo)
+        self.developer = IdeaDeveloper(project_root, repo)
         self.repo = repo
         self.out_queue = out_queue
         self.user_id = user_id
@@ -215,15 +215,9 @@ class IdeaOrchestrator:
             logger.info(f"Step 4: Developer implementing {len(implementable[:2])} ideas")
 
             for idea in implementable[:2]:  # Max 2 per cycle
-                matching_review = next(
-                    (r for r in reviews if r.get("idea_title") == idea.get("title")),
-                    {"verdict": "approved", "implementation_plan": idea.get("how", ""),
-                     "feedback": "Одобрено к внедрению"}
-                )
-
                 await self._notify(f"🔧 Внедряю: {idea.get('title', '?')} (сложность: {idea.get('effort', '?')})...")
 
-                impl_result = await self.developer.implement(idea, matching_review)
+                impl_result = await self.developer.implement(idea)
 
                 # Save implementation result
                 await self.repo.create_idea(

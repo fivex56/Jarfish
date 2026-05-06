@@ -83,17 +83,30 @@ class IdeaOrchestrator:
                 status="pending"
             )
 
-        # Notify user about initial ideas
+        # Save ideas to file for pending approval
         if ideas:
-            ideas_preview = "\n".join(
-                f"• {i.get('title', '?')} ({i.get('impact', '?')} impact, {i.get('effort', '?')} effort)"
-                for i in ideas[:7]
+            import json as _json
+            pending_path = Path(self.project_root) / ".pending_ideas.json"
+            _json.dump(ideas, pending_path.open("w", encoding="utf-8"),
+                      ensure_ascii=False, indent=2)
+
+            # Numbered list for user to pick from
+            numbered = "\n".join(
+                f"{idx}. {i.get('title', '?')} — {i.get('what', '?')[:100]} "
+                f"({i.get('impact', '?')} impact, {i.get('effort', '?')} effort)"
+                for idx, i in enumerate(ideas, 1)
             )
             await self._notify(
-                f"💡 Генератор придумал {len(ideas)} идей:\n\n{ideas_preview}\n\n"
+                f"💡 Генератор придумал {len(ideas)} идей:\n\n"
+                f"{numbered}\n\n"
                 f"_{summary}_\n\n"
-                f"🔄 Передаю Разработчику на ревью..."
+                f"⬇️ <b>ОТВЕТЬ НОМЕРАМИ</b> какие берём в работу:\n"
+                f"<code>1 3 5</code> — значит берём идеи 1, 3 и 5\n"
+                f"Остальные отбрасываем.",
+                parse_mode="HTML"
             )
+            # Stop here — wait for user approval
+            return
         else:
             await self._notify(
                 f"⚠️ Генератор не смог придумать структурированных идей.\n"
@@ -335,6 +348,210 @@ class IdeaOrchestrator:
 
         self._last_weekly = datetime.now()
         logger.info("=== Weekly review completed ===")
+
+    async def continue_after_approval(self, numbers_str: str) -> str:
+        """Called when user replies with numbers like '1 2 4'. Filters ideas and continues pipeline."""
+        import json as _json
+        pending_path = Path(self.project_root) / ".pending_ideas.json"
+
+        if not pending_path.exists():
+            return "Нет ожидающих идей для одобрения. Возможно, цикл ещё не запускался."
+
+        # Parse numbers from user message
+        try:
+            selected = set()
+            for part in numbers_str.split():
+                part = part.strip(",. ")
+                if part.isdigit():
+                    selected.add(int(part))
+        except (ValueError, TypeError):
+            return "Не смог разобрать номера. Отправь цифры через пробел: 1 2 4"
+
+        if not selected:
+            return "Не нашёл номеров в сообщении. Отправь цифры: 1 2 4"
+
+        # Load all pending ideas
+        all_ideas = _json.load(pending_path.open("r", encoding="utf-8"))
+        filtered = [idea for idx, idea in enumerate(all_ideas, 1) if idx in selected]
+
+        # Remove pending file
+        pending_path.unlink(missing_ok=True)
+
+        if not filtered:
+            return f"Номера {sorted(selected)} не подходят. Всего было {len(all_ideas)} идей. Ничего не делаю."
+
+        await self._notify(
+            f"👍 Принято! {len(filtered)} из {len(all_ideas)} идей идут в работу:\n"
+            f"{', '.join(str(s) for s in sorted(selected))}\n\n"
+            f"🔄 Запускаю Разработчика..."
+        )
+
+        # Continue pipeline with selected ideas
+        await self._continue_with_ideas(filtered)
+        return "ok"
+
+    async def _continue_with_ideas(self, ideas: list[dict]):
+        """Steps 2-4: review, refine, implement — run with the given ideas."""
+        # --- Step 2: Developer reviews ---
+        await self._notify("🔍 Агент-Разработчик проверяет логи и анализирует идеи...")
+        logger.info("Step 2: Developer reviewing ideas")
+
+        log_analysis = await self.developer.analyze_logs()
+        project_state = await self.developer.analyze_project_state()
+        review = await self.developer.review(ideas, log_analysis, project_state)
+
+        reviews = review.get("reviews", [])
+        log_insights = review.get("log_insights", "")
+        arch_notes = review.get("architecture_notes", "")
+
+        # Save reviews to DB
+        for i, rev in enumerate(reviews):
+            parent_id = None
+            if i < len(ideas):
+                recent = await self.repo.list_ideas(round="generation", status="pending", limit=10)
+                if recent and i < len(recent):
+                    parent_id = recent[-(i + 1)]["id"]
+            await self.repo.create_idea(
+                content=f"Verdict: {rev.get('verdict', '?')}. {rev.get('feedback', '')}",
+                round="review",
+                agent="developer",
+                parent_id=parent_id,
+                status="completed"
+            )
+
+        approved = [r for r in reviews if r.get("verdict") == "approved"]
+        rejected = [r for r in reviews if r.get("verdict") == "rejected"]
+        needs_work = [r for r in reviews if r.get("verdict") == "needs_revision"]
+
+        review_msg = (
+            f"📊 Разработчик проверил идеи:\n"
+            f"✅ Одобрено: {len(approved)}\n"
+            f"🔧 Нужна доработка: {len(needs_work)}\n"
+            f"❌ Отклонено: {len(rejected)}\n"
+        )
+        if log_insights:
+            review_msg += f"\n📋 Из логов: {log_insights[:300]}"
+        if arch_notes:
+            review_msg += f"\n🏗 По архитектуре: {arch_notes[:300]}"
+        await self._notify(review_msg)
+
+        # --- Step 3: Refinement ---
+        if needs_work:
+            await self._notify("🔄 Генератор дорабатывает идеи с учётом замечаний...")
+            logger.info("Step 3: Generator refining ideas")
+
+            feedback_text = "\n".join(
+                f"Идея: {r.get('idea_title', '')}\n"
+                f"Вердикт: {r.get('verdict', '')}\n"
+                f"Фидбек: {r.get('feedback', '')}"
+                for r in reviews
+            )
+
+            project_info = await self.generator.analyze_project()
+            trends = await self.generator.search_trends()
+            refined = await self.generator.brainstorm(
+                project_info, trends, previous_feedback=feedback_text
+            )
+            refined_ideas = refined.get("ideas", [])
+            refined_summary = refined.get("summary", "")
+
+            for idea in refined_ideas:
+                await self.repo.create_idea(
+                    content=f"{idea.get('title', '')}: {idea.get('what', '')}",
+                    round="refinement",
+                    agent="generator",
+                    status="pending"
+                )
+
+            await self._notify(
+                f"✨ Генератор доработал идеи. Теперь {len(refined_ideas)} предложений.\n\n"
+                f"_{refined_summary}_"
+            )
+
+            approved_ideas = []
+            for r in approved:
+                review_title = r.get("idea_title", "").strip().lower()
+                for idea in ideas:
+                    if idea.get("title", "").strip().lower() == review_title:
+                        approved_ideas.append(idea)
+                        break
+            all_approved = approved_ideas + refined_ideas
+        else:
+            approved_ideas = []
+            for r in approved:
+                review_title = r.get("idea_title", "").strip().lower()
+                for idea in ideas:
+                    if idea.get("title", "").strip().lower() == review_title:
+                        approved_ideas.append(idea)
+                        break
+            all_approved = approved_ideas
+
+        # --- Step 4: Implementation ---
+        effort_order = {"low": 0, "medium": 1, "high": 99}
+        impact_order = {"high": 0, "medium": 1, "low": 2}
+
+        for_impl = [i for i in all_approved if isinstance(i, dict) and i.get("effort") != "high"]
+        for_weekly = [i for i in all_approved if isinstance(i, dict) and i.get("effort") == "high"]
+
+        if for_weekly:
+            heavy_titles = ", ".join(i.get("title", "?") for i in for_weekly)
+            await self._notify(f"📦 Тяжёлые идеи отложены на еженедельный обзор: {heavy_titles}")
+
+        implementable = sorted(
+            for_impl,
+            key=lambda i: (effort_order.get(i.get("effort", "medium"), 1),
+                          impact_order.get(i.get("impact", "low"), 2))
+        )
+
+        if implementable:
+            await self._notify(f"🔨 Разработчик внедряет {len(implementable[:2])} идей (лёгкие и средние)...")
+            logger.info(f"Step 4: Developer implementing {len(implementable[:2])} ideas")
+
+            for idea in implementable[:2]:
+                await self._notify(f"🔧 Внедряю: {idea.get('title', '?')} (сложность: {idea.get('effort', '?')})...")
+                impl_result = await self.developer.implement(idea)
+
+                await self.repo.create_idea(
+                    content=f"Implementation result: {impl_result[:500]}",
+                    round="implementation",
+                    agent="developer",
+                    status="completed"
+                )
+
+                await self._update_readme_changelog(idea)
+
+                try:
+                    import subprocess
+                    root = Path(self.project_root)
+                    subprocess.run(["git", "add", "-A"], cwd=str(root),
+                                  capture_output=True, timeout=15)
+                    result = subprocess.run(
+                        ["git", "diff", "--cached", "--stat"],
+                        cwd=str(root), capture_output=True, text=True, timeout=15
+                    )
+                    if result.stdout.strip():
+                        msg = f"Agent-implemented: {idea.get('title', 'improvement')}"
+                        subprocess.run(["git", "commit", "-m", msg],
+                                      cwd=str(root), capture_output=True, timeout=15)
+                        subprocess.run(["git", "push"], cwd=str(root),
+                                      capture_output=True, timeout=15)
+                        await self._notify(f"✅ Внедрено и залито на гитхаб: {idea.get('title', '?')}")
+                    else:
+                        await self._notify(f"📝 Для «{idea.get('title', '?')}» сгенерирован план внедрения, лежит в базе идей")
+                except Exception as e:
+                    logger.warning(f"Git operation failed: {e}")
+        else:
+            await self._notify("⚠️ Нет идей для немедленного внедрения (все тяжёлые — уйдут в еженедельный обзор)")
+
+        await self._notify(
+            f"🏁 Цикл саморазвития завершён.\n\n"
+            f"Сгенерировано идей: {len(ideas)}\n"
+            f"Одобрено: {len(approved)}\n"
+            f"Отклонено: {len(rejected)}\n"
+            f"Попыток внедрения: {len(implementable[:2])}\n\n"
+            f"Следующий цикл — через 2 дня."
+        )
+        logger.info("=== Agent cycle completed ===")
 
     async def _notify(self, text: str, parse_mode: str | None = None):
         """Send message to user via out_queue and Telegram, splitting if needed."""

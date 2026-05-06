@@ -374,10 +374,10 @@ class BotHandlers:
                     parsed = await self.nl.parse(text)
                 except Exception as e:
                     logger.error(f"LLM parse failed: {e}")
-                    await self._reply_or_voice(update, f"Записал: {text[:150]}")
+                    await self._respond(update, f"Записал: {text[:150]}")
                     return
             else:
-                await self._reply_or_voice(update, f"Записал: {text[:150]}")
+                await self._respond(update, f"Записал: {text[:150]}")
                 return
 
             # Save to memory
@@ -405,7 +405,7 @@ class BotHandlers:
             if query_data:
                 reply = reply + "\n\n" + query_data if reply else query_data
             if reply:
-                await self._reply_or_voice(update, reply)
+                await self._respond(update, reply)
         else:
             await update.message.reply_text("Не удалось распознать речь")
 
@@ -724,16 +724,10 @@ class BotHandlers:
         return "\n".join(lines) if lines else None
 
     async def _respond(self, update: Update, text: str):
-        """Send response to both Telegram and CLI queue."""
-        parts = split_long_message(text)
-        for part in parts:
-            await update.message.reply_text(part, parse_mode="HTML")
-            await self.out_queue.put({"text": part, "source": "jarvis"})
-            await self.processor.repo.save_message("out", part, "jarvis")
-
-    async def _reply_or_voice(self, update: Update, text: str):
         """Send text or voice response depending on voice_mode setting."""
         user_id = update.effective_user.id
+
+        # Try voice if enabled
         if self._voice_mode.get(user_id) and self.speech:
             try:
                 ogg_path = await self.speech.synthesize(text)
@@ -742,11 +736,16 @@ class BotHandlers:
                 os.unlink(ogg_path)
                 await self.out_queue.put({"text": text, "source": "jarvis"})
                 await self.processor.repo.save_message("out", text, "jarvis")
+                return
             except Exception as e:
                 logger.error(f"TTS failed, falling back to text: {e}")
-                await self._respond(update, text)
-        else:
-            await self._respond(update, text)
+
+        # Fall back to text
+        parts = split_long_message(text)
+        for part in parts:
+            await update.message.reply_text(part, parse_mode="HTML")
+            await self.out_queue.put({"text": part, "source": "jarvis"})
+            await self.processor.repo.save_message("out", part, "jarvis")
 
     def register(self, app):
         """Register all handlers on the PTB Application."""

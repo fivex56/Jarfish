@@ -286,14 +286,14 @@ async def main():
         async def weekly_review(context):
             await orchestrator.run_weekly_review()
 
-        # Check daily at 11:00 — orchestrator decides if 2 days passed
+        # Check daily at 20:30 UTC (03:30 Danang)
         app.job_queue.run_daily(
             biweekly_cycle,
-            time=time(hour=11, minute=0),
+            time=time(hour=20, minute=30),
             days=(0, 1, 2, 3, 4, 5, 6),
             name="idea_cycle"
         )
-        logger.info("IdeaOrchestrator cycle check scheduled daily at 11:00")
+        logger.info("IdeaOrchestrator cycle check scheduled daily at 20:30 UTC (03:30 Danang)")
 
         # Weekly global review on Monday at 10:00
         app.job_queue.run_daily(

@@ -628,7 +628,23 @@ class IdeaOrchestrator:
                 return
 
             title = idea.get("title", "unknown")
-            what = idea.get("what", "")[:150]
+            what = idea.get("what", "").strip()
+
+            # Build a concise changelog line: truncate description at sentence boundary
+            max_len = 120
+            if len(what) > max_len:
+                # Cut at last sentence-ending punctuation before max_len
+                cut = max_len
+                for sep in (". ", "; ", " — ", ", ", " "):
+                    pos = what.rfind(sep, 0, max_len)
+                    if pos > 40:  # don't cut too early
+                        cut = pos + len(sep.rstrip())
+                        break
+                what = what[:cut].rstrip()
+                if not what[-1] in ".!?":
+                    what += "…"
+
+            changelog_line = f"* {title} — {what}" if what else f"* {title}"
 
             lines = readme_path.read_text(encoding="utf-8").splitlines()
             today = datetime.now().strftime("%Y-%m-%d")
@@ -651,7 +667,6 @@ class IdeaOrchestrator:
                     # Find existing date section for today, or insert new one
                     found_date = False
                     date_header = f"### {today}"
-                    # Check if today already has a section
                     remaining = lines[i:]
                     for j, rl in enumerate(remaining):
                         if rl.startswith("### ") and today in rl:
@@ -664,7 +679,7 @@ class IdeaOrchestrator:
                         new_lines.append("")
                         new_lines.append(date_header)
 
-                    new_lines.append(f"* {title} — {what}")
+                    new_lines.append(changelog_line)
                     continue
 
                 i += 1

@@ -289,6 +289,14 @@ def build_thought_dates_keyboard(dates: list[str]) -> InlineKeyboardMarkup:
 # ── Menu Callback Handlers ──────────────────────────────────────
 
 
+async def _edit_or_reply(query, text, **kwargs):
+    """Edit the callback message, or send a new one if it's a photo (can't edit photos)."""
+    try:
+        await query.edit_message_text(text, **kwargs)
+    except Exception:
+        await query.message.reply_text(text, **kwargs)
+
+
 async def handle_menu_callbacks(handlers, update, context):
     """Route all menu-related callbacks. 'handlers' is the BotHandlers instance."""
     query = update.callback_query
@@ -304,7 +312,7 @@ async def handle_menu_callbacks(handlers, update, context):
     try:
         # ── Main views ──
         if data == "menu":
-            await query.edit_message_text(
+            await _edit_or_reply(query,
                 "<b>Меню</b>",
                 reply_markup=build_main_menu(),
                 parse_mode="HTML"
@@ -736,8 +744,7 @@ async def handle_menu_callbacks(handlers, update, context):
             text = f"<b>Мысли за сегодня ({today})</b>"
             if not thoughts:
                 text += "\n\nПока ничего. Нажми ➕ Мысль чтобы добавить."
-            await query.edit_message_text(
-                text,
+            await _edit_or_reply(query, text,
                 reply_markup=build_thoughts_keyboard(thoughts, today),
                 parse_mode="HTML"
             )
@@ -762,7 +769,7 @@ async def handle_menu_callbacks(handlers, update, context):
                 await query.answer("Мыслей пока нет")
                 return
             today = datetime.now().strftime("%Y-%m-%d")
-            await query.edit_message_text(
+            await _edit_or_reply(query,
                 "<b>Дни с мыслями:</b>",
                 reply_markup=build_thought_dates_keyboard(dates),
                 parse_mode="HTML"
@@ -771,7 +778,7 @@ async def handle_menu_callbacks(handlers, update, context):
         elif data.startswith("thought_date_"):
             date = data.split("_", 2)[2]
             thoughts = await repo.list_thoughts(date=date)
-            await query.edit_message_text(
+            await _edit_or_reply(query,
                 f"<b>Мысли за {date} ({len(thoughts)}):</b>",
                 reply_markup=build_thoughts_keyboard(thoughts, date),
                 parse_mode="HTML"
@@ -784,7 +791,7 @@ async def handle_menu_callbacks(handlers, update, context):
             await query.answer("Удалено")
             today = datetime.now().strftime("%Y-%m-%d")
             thoughts = await repo.list_thoughts(date=today)
-            await query.edit_message_text(
+            await _edit_or_reply(query,
                 f"<b>Мысли за сегодня ({today})</b>",
                 reply_markup=build_thoughts_keyboard(thoughts, today),
                 parse_mode="HTML"
@@ -797,17 +804,24 @@ async def handle_menu_callbacks(handlers, update, context):
                 await query.answer("Не найдено")
                 return
             if thought["kind"] == "image" and thought["image_path"]:
-                # Send the image file
                 img_path = thought["image_path"]
                 if os.path.exists(img_path):
+                    # Send photo separately (no keyboard — can't edit a photo back to text),
+                    # keep navigation keyboard on the text message
                     caption = f"🖼 {thought['created_at']}"
                     await query.message.reply_photo(
                         photo=open(img_path, "rb"),
                         caption=caption,
-                        reply_markup=build_thought_detail_keyboard(thought_id)
                     )
-                    await query.answer()
-                    return
+                # Edit the current text message to show detail + nav keyboard
+                text = f"<b>🖼 Фото</b>\n{thought['created_at']}\n{thought.get('content', '') or 'Без подписи'}"
+                await query.edit_message_text(
+                    text,
+                    reply_markup=build_thought_detail_keyboard(thought_id),
+                    parse_mode="HTML"
+                )
+                await query.answer()
+                return
             text = f"<b>💭 {thought['created_at']}</b>\n\n{thought['content']}"
             await query.edit_message_text(
                 text,

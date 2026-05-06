@@ -20,25 +20,25 @@ class SpeechService:
             logger.info("Whisper model loaded")
         return self._model
 
-    async def transcribe(self, file_path: str) -> str:
+    async def transcribe(self, file_path: str, language: str = "ru") -> str:
         """Transcribe an audio file. Returns text or empty string on failure."""
         try:
             import asyncio
             loop = asyncio.get_event_loop()
             # Run blocking Whisper call in thread pool
             result = await loop.run_in_executor(
-                None, self._transcribe_sync, file_path
+                None, self._transcribe_sync, file_path, language
             )
             return result
         except Exception as e:
             logger.error(f"Transcription failed: {e}")
             return ""
 
-    def _transcribe_sync(self, file_path: str) -> str:
+    def _transcribe_sync(self, file_path: str, language: str) -> str:
         model = self._load_model()
         result = model.transcribe(
             file_path,
-            language="ru",
+            language=language,
             fp16=False,  # CPU mode
             verbose=False
         )
@@ -57,6 +57,7 @@ class SpeechService:
 
     @staticmethod
     def _synthesize_sync(text: str, lang: str, ogg_path: str):
+        from gtts import gTTS
         tts = gTTS(text=text, lang=lang)
         tts.save(ogg_path)
         logger.info(f"TTS synthesized: {text[:100]} -> {ogg_path}")

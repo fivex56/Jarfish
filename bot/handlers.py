@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from pathlib import Path
@@ -14,6 +15,9 @@ from bot.menu import (
 from db.repository import Repository
 
 logger = logging.getLogger(__name__)
+
+# File where voice mode preference is persisted across restarts
+VOICE_SETTINGS_FILE = Path(__file__).parent.parent / "data" / "voice_settings.json"
 
 
 class BotHandlers:
@@ -32,7 +36,37 @@ class BotHandlers:
         self.calendar = calendar_service
         self._pending_intents = {}  # user_id -> parsed dict awaiting confirmation
         self._edit_state = {}      # user_id -> edit state dict
-        self._voice_mode = {}      # user_id -> bool: озвучивать ответы голосом
+        self._voice_mode = self._load_voice_settings()  # user_id -> bool, persisted
+
+    def _load_voice_settings(self) -> dict:
+        """Load voice mode preference from disk."""
+        try:
+            if VOICE_SETTINGS_FILE.exists():
+                data = json.loads(VOICE_SETTINGS_FILE.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    # Convert string keys back to int for per-user voice_mode flags
+                    result = {}
+                    for k, v in data.items():
+                        if k == "_voice_lang":
+                            result["_voice_lang"] = v
+                        elif k.lstrip("-").isdigit():
+                            result[int(k)] = v
+                    return result
+        except Exception:
+            pass
+        return {}
+
+    def _save_voice_settings(self):
+        """Persist voice mode preference to disk."""
+        try:
+            VOICE_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            # Merge _voice_lang into the dict; _voice_mode contains {user_id: bool}
+            data = dict(self._voice_mode)
+            if "_voice_lang" in self._voice_mode:
+                data["_voice_lang"] = self._voice_mode["_voice_lang"]
+            VOICE_SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            logger.error(f"Failed to save voice settings: {e}")
 
     def is_allowed(self, user_id: int) -> bool:
         return user_id == self.allowed_user_id
@@ -40,13 +74,15 @@ class BotHandlers:
     async def handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_allowed(update.effective_user.id):
             return
-        # First clear any stuck ReplyKeyboardMarkup from old bot versions
         await update.message.reply_text(
             "Обновлено",
             reply_markup=ReplyKeyboardRemove()
         )
+        # Main greeting: use voice if enabled, then send menu as text
+        greeting = "Джарвис к вашим услугам"
+        await self._respond(update, greeting)
         await update.message.reply_text(
-            "<b>Джарвис к вашим услугам</b>",
+            "📋 <b>Главное меню</b>",
             reply_markup=build_main_menu(),
             parse_mode="HTML"
         )
@@ -54,8 +90,9 @@ class BotHandlers:
     async def handle_menu_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_allowed(update.effective_user.id):
             return
+        await self._respond(update, "Меню")
         await update.message.reply_text(
-            "<b>Меню</b>",
+            "📋 <b>Выберите действие</b>",
             reply_markup=build_main_menu(),
             parse_mode="HTML"
         )
@@ -75,6 +112,7 @@ class BotHandlers:
             return
         user_id = update.effective_user.id
         self._voice_mode[user_id] = True
+        self._save_voice_settings()
         await update.message.reply_text("Голосовой режим включён. Ответы будут озвучиваться.")
 
     async def handle_voice_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -82,7 +120,18 @@ class BotHandlers:
             return
         user_id = update.effective_user.id
         self._voice_mode[user_id] = False
+        self._save_voice_settings()
         await update.message.reply_text("Голосовой режим выключен. Ответы будут текстом.")
+
+    async def handle_cycle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.is_allowed(update.effective_user.id):
+            return
+        orch = context.application.bot_data.get("orchestrator")
+        if not orch:
+            await update.message.reply_text("Оркестратор не запущен (нет DeepSeek API ключа)")
+            return
+        await update.message.reply_text("🚀 Запускаю цикл саморазвития принудительно...")
+        await orch.force_cycle()
 
     async def handle_task_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_allowed(update.effective_user.id):
@@ -361,7 +410,8 @@ class BotHandlers:
         ogg_path = os.path.join(tempfile.gettempdir(), f"voice_{voice.file_id}.ogg")
         await file.download_to_drive(ogg_path)
 
-        text = await self.speech.transcribe(ogg_path)
+        voice_lang = self._voice_mode.get("_voice_lang", "ru")
+        text = await self.speech.transcribe(ogg_path, language=voice_lang)
         os.unlink(ogg_path)
 
         if text:
@@ -457,7 +507,8 @@ class BotHandlers:
 
         text = ""
         if self.speech:
-            text = await self.speech.transcribe(ogg_path)
+            voice_lang = self._voice_mode.get("_voice_lang", "ru")
+            text = await self.speech.transcribe(ogg_path, language=voice_lang)
         os.unlink(ogg_path)
 
         content = text or "[голосовое без расшифровки]"
@@ -767,6 +818,7 @@ class BotHandlers:
         app.add_handler(CommandHandler("overdue", self.handle_overdue))
         app.add_handler(CommandHandler("voice_on", self.handle_voice_on))
         app.add_handler(CommandHandler("voice_off", self.handle_voice_off))
+        app.add_handler(CommandHandler("cycle", self.handle_cycle))
         # Voice and photo handlers
         app.add_handler(MessageHandler(filters.VOICE, self.handle_voice))
         app.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))
@@ -775,4 +827,4 @@ class BotHandlers:
         # Inline button callbacks
         app.add_handler(CallbackQueryHandler(self.handle_confirmation, pattern="^confirm_"))
         app.add_handler(CallbackQueryHandler(self.handle_overdue_reschedule, pattern="^overdue_"))
-        app.add_handler(CallbackQueryHandler(self.handle_menu, pattern="^(menu|view_|detail_|complete_|delete_|postpone_|edit_|new_|project_|proj_|hoursel_|minsel_|rollover_|thought_)"))
+        app.add_handler(CallbackQueryHandler(self.handle_menu, pattern="^(menu|view_|detail_|complete_|delete_|postpone_|edit_|new_|project_|proj_|hoursel_|minsel_|rollover_|thought_|voice_)"))

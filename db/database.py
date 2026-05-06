@@ -56,6 +56,10 @@ class Database:
             await self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ideas_parent ON ideas(parent_id)")
             await self.conn.execute("PRAGMA user_version = 4")
             await self.conn.commit()
+        if version <= 4:
+            await self.conn.execute("ALTER TABLE tasks ADD COLUMN reschedule_count INTEGER NOT NULL DEFAULT 0")
+            await self.conn.execute("PRAGMA user_version = 5")
+            await self.conn.commit()
 
     async def close(self):
         if self.conn:

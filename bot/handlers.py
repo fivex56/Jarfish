@@ -163,6 +163,58 @@ class BotHandlers:
         text = await self.processor.overdue()
         await self._respond(update, text)
 
+    async def handle_overdue_reschedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle inline keyboard actions for overdue task rescheduling."""
+        from datetime import datetime, timedelta
+
+        query = update.callback_query
+        user_id = update.effective_user.id
+
+        if not self.is_allowed(user_id):
+            await query.answer("Нет доступа")
+            return
+
+        data = query.data  # e.g. "overdue_tomorrow_42"
+        try:
+            _, action, task_id_str = data.split("_", 2)
+            task_id = int(task_id_str)
+        except (ValueError, IndexError):
+            await query.answer("Неверные данные")
+            return
+
+        task = await self.processor.repo.get_task(task_id)
+        if not task:
+            await query.answer("Задача не найдена")
+            return
+
+        original_text = query.message.text_html or query.message.text
+        now = datetime.now()
+        if action == "tomorrow":
+            new_date = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+            await self.processor.repo.update_task_due_date(task_id, new_date)
+            await query.edit_message_text(
+                f"{original_text}\n\n✅ Перенесено на завтра ({new_date})",
+                parse_mode="HTML"
+            )
+        elif action == "week":
+            new_date = (now + timedelta(days=7)).strftime("%Y-%m-%d")
+            await self.processor.repo.update_task_due_date(task_id, new_date)
+            await query.edit_message_text(
+                f"{original_text}\n\n✅ Перенесено на неделю ({new_date})",
+                parse_mode="HTML"
+            )
+        elif action == "cancel":
+            await self.processor.repo.cancel_task(task_id)
+            await query.edit_message_text(
+                f"{original_text}\n\n❌ Задача отменена",
+                parse_mode="HTML"
+            )
+        else:
+            await query.answer("Неизвестное действие")
+            return
+
+        await query.answer()
+
     async def handle_free_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_allowed(update.effective_user.id):
             return
@@ -674,4 +726,5 @@ class BotHandlers:
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_free_text))
         # Inline button callbacks
         app.add_handler(CallbackQueryHandler(self.handle_confirmation, pattern="^confirm_"))
+        app.add_handler(CallbackQueryHandler(self.handle_overdue_reschedule, pattern="^overdue_"))
         app.add_handler(CallbackQueryHandler(self.handle_menu, pattern="^(menu|view_|detail_|complete_|delete_|edit_|new_|project_|proj_|hoursel_|minsel_|rollover_|thought_)"))

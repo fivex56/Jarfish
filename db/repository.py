@@ -78,6 +78,17 @@ class Repository:
         await self.db.commit()
         return await self.get_task(task_id)
 
+    async def update_task_due_date(self, task_id: int, new_due_date: str) -> dict | None:
+        """Bump due_date and increment reschedule_count."""
+        await self.db.execute(
+            "UPDATE tasks SET due_date = ?, reschedule_count = reschedule_count + 1, updated_at = datetime('now') WHERE id = ?",
+            (new_due_date, task_id))
+        await self.db.commit()
+        return await self.get_task(task_id)
+
+    async def cancel_task(self, task_id: int) -> dict | None:
+        return await self.update_task(task_id, status="cancelled")
+
     async def get_overdue_tasks(self) -> list[dict]:
         rows = await self.db.fetch_all("SELECT * FROM v_overdue_tasks ORDER BY due_date ASC")
         return [dict(r) for r in rows]

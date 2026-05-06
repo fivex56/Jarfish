@@ -100,12 +100,15 @@ def build_task_detail_keyboard(task_id: int, view: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton("🗑 Удалить", callback_data=f"delete_{task_id}_{view}"),
         ],
         [
-            InlineKeyboardButton("✏ Название", callback_data=f"edit_title_{task_id}_{view}"),
+            InlineKeyboardButton("📅 На завтра", callback_data=f"postpone_{task_id}_{view}"),
             InlineKeyboardButton("⏰ Время", callback_data=f"edit_due_{task_id}_{view}"),
         ],
         [
-            InlineKeyboardButton("➕🔔 Напоминание", callback_data=f"edit_remind_{task_id}_{view}"),
+            InlineKeyboardButton("✏ Название", callback_data=f"edit_title_{task_id}_{view}"),
             InlineKeyboardButton("🏷 Теги", callback_data=f"edit_tags_{task_id}_{view}"),
+        ],
+        [
+            InlineKeyboardButton("➕🔔 Напоминание", callback_data=f"edit_remind_{task_id}_{view}"),
         ],
         [
             InlineKeyboardButton("◀ К списку", callback_data=f"view_{view}"),
@@ -374,6 +377,37 @@ async def handle_menu_callbacks(handlers, update, context):
             await query.answer(f"Удалено: {title}")
             # Go back to the list
             await _show_view(query, repo, view)
+
+        # ── Postpone to tomorrow ──
+        elif data.startswith("postpone_"):
+            parts = data.split("_", 2)
+            task_id = int(parts[1])
+            view = parts[2] if len(parts) > 2 else "all"
+            task = await repo.get_task(task_id)
+            if not task:
+                await query.answer("Задача не найдена")
+                return
+
+            from datetime import datetime, timedelta
+            due = task.get("due_date") or ""
+            if due and " " in due:
+                # Keep same time, move date to tomorrow
+                time_part = due.split(" ")[1][:5]
+                tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+                new_due = f"{tomorrow} {time_part}"
+            else:
+                tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+                new_due = tomorrow
+
+            await repo.update_task(task_id, due_date=new_due)
+            await query.answer(f"Перенесено на завтра: {new_due}")
+
+            task = await repo.get_task(task_id)
+            await query.edit_message_text(
+                format_task_detail(task),
+                reply_markup=build_task_detail_keyboard(task_id, view),
+                parse_mode="HTML"
+            )
 
         # ── Edit title ──
         elif data.startswith("edit_title_"):

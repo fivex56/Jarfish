@@ -727,4 +727,4 @@ class BotHandlers:
         # Inline button callbacks
         app.add_handler(CallbackQueryHandler(self.handle_confirmation, pattern="^confirm_"))
         app.add_handler(CallbackQueryHandler(self.handle_overdue_reschedule, pattern="^overdue_"))
-        app.add_handler(CallbackQueryHandler(self.handle_menu, pattern="^(menu|view_|detail_|complete_|delete_|edit_|new_|project_|proj_|hoursel_|minsel_|rollover_|thought_)"))
+        app.add_handler(CallbackQueryHandler(self.handle_menu, pattern="^(menu|view_|detail_|complete_|delete_|postpone_|edit_|new_|project_|proj_|hoursel_|minsel_|rollover_|thought_)"))

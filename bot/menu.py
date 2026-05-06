@@ -389,7 +389,6 @@ async def handle_menu_callbacks(handlers, update, context):
                 await query.answer("Задача не найдена")
                 return
 
-            from datetime import datetime, timedelta
             due = task.get("due_date") or ""
             if due and " " in due:
                 # Keep same time, move date to tomorrow

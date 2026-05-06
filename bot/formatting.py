@@ -53,9 +53,10 @@ def format_task(task: dict, index: int | None = None, cli: bool = False) -> str:
     status_map = STATUS_EMOJI_CLI if cli else STATUS_EMOJI
     status_icon = status_map.get(task.get("status", "todo"), "?")
     prio = PRIORITY_ICONS.get(task.get("priority", 0), "")
+    indicator = _score_indicator(task.get("score", 0))
 
     num = f"{index}." if index is not None else f"#{task['id']}"
-    line = f"{status_icon} {num} {task['title']} {prio}"
+    line = f"{indicator} {status_icon} {num} {task['title']} {prio}"
     if task.get("due_date"):
         line += f"  📅 {task['due_date']}"
     if task.get("tags"):
@@ -64,14 +65,24 @@ def format_task(task: dict, index: int | None = None, cli: bool = False) -> str:
     return line
 
 
+def _score_indicator(score: float) -> str:
+    if score > 1.5:
+        return "🔴"
+    elif score > 0.5:
+        return "🟡"
+    else:
+        return "🟢"
+
+
 def format_task_compact(task: dict, time_str: str | None = None, cli: bool = False) -> str:
     """Compact task format for date-specific lists: no date, emoji time if available."""
     status_map = STATUS_EMOJI_CLI if cli else STATUS_EMOJI
     status_icon = status_map.get(task.get("status", "todo"), "?")
     prio = PRIORITY_ICONS.get(task.get("priority", 0), "")
     emoji = task.get("emoji", "")
+    indicator = _score_indicator(task.get("score", 0))
 
-    line = f"{status_icon} <b>#{task['id']}</b>"
+    line = f"{indicator} {status_icon} <b>#{task['id']}</b>"
     if time_str:
         line += f" {time_str}"
     line += f" {task['title']} {prio}"

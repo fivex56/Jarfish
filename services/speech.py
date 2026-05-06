@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 
 class SpeechService:
-    """Transcribes voice messages using OpenAI Whisper."""
+    """Transcribes voice messages (Whisper) and synthesizes text to speech (gTTS)."""
 
     def __init__(self, model_name: str = "tiny"):
         self.model_name = model_name
@@ -45,3 +45,18 @@ class SpeechService:
         text = result.get("text", "").strip()
         logger.info(f"Transcribed: {text[:100]}")
         return text
+
+    async def synthesize(self, text: str, lang: str = "ru") -> str:
+        """Synthesize text to speech via gTTS. Returns path to OGG file."""
+        from gtts import gTTS
+        import asyncio
+        ogg_path = os.path.join(tempfile.gettempdir(), f"tts_{hash(text) % 100000}.ogg")
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._synthesize_sync, text, lang, ogg_path)
+        return ogg_path
+
+    @staticmethod
+    def _synthesize_sync(text: str, lang: str, ogg_path: str):
+        tts = gTTS(text=text, lang=lang)
+        tts.save(ogg_path)
+        logger.info(f"TTS synthesized: {text[:100]} -> {ogg_path}")

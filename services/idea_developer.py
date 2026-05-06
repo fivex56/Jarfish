@@ -139,14 +139,15 @@ class IdeaDeveloper:
                 lambda: subprocess.run(
                     [
                         "claude", "-p", prompt,
-                        "--permission-mode", "auto",
+                        "--permission-mode", "bypassPermissions",
                         "--output-format", "text",
-                        "--max-turns", "15"
+                        "--max-turns", "20",
+                        "--allowedTools", "Read,Edit,Write,Bash(git *),Glob,Grep"
                     ],
                     cwd=str(self.project_root),
                     capture_output=True,
                     text=True,
-                    timeout=300,  # 5 minutes max
+                    timeout=600,  # 10 minutes max
                     encoding="utf-8"
                 )
             )
@@ -159,8 +160,8 @@ class IdeaDeveloper:
             return result.stdout or "Claude выполнил задачу без текстового ответа"
 
         except subprocess.TimeoutExpired:
-            logger.error("Claude CLI timed out after 5 minutes")
-            return "Таймаут Claude CLI (5 минут)"
+            logger.error("Claude CLI timed out after 10 minutes")
+            return "Таймаут Claude CLI (10 минут)"
         except Exception as e:
             logger.error(f"Claude CLI error: {e}")
             return f"Ошибка запуска Claude CLI: {e}"
@@ -199,6 +200,7 @@ class IdeaDeveloper:
                     title_end = len(line)
 
                 title = line[1:title_end].strip().lstrip("- ").strip("[] ")
+                title = title.replace("**", "").strip()
                 feedback = line[title_end + 1:].strip() if title_end < len(line) else ""
 
                 review = {

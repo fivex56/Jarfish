@@ -181,15 +181,27 @@ class IdeaOrchestrator:
                 f"_{refined_summary}_"
             )
 
-            # Merge approved + refined for implementation
-            all_approved = approved + [
-                {"title": ri.get("title", ""), "what": ri.get("what", ""),
-                 "why": ri.get("why", ""), "how": ri.get("how", ""),
-                 "impact": ri.get("impact", ""), "effort": ri.get("effort", "")}
-                for ri in refined_ideas
-            ]
+            # Match approved reviews back to original ideas for implementation
+            approved_ideas = []
+            for r in approved:
+                review_title = r.get("idea_title", "").strip().lower()
+                for idea in ideas:
+                    if idea.get("title", "").strip().lower() == review_title:
+                        approved_ideas.append(idea)
+                        break
+
+            all_approved = approved_ideas + refined_ideas
         else:
-            all_approved = approved
+            # Match approved reviews back to original ideas
+            approved_ideas = []
+            for r in approved:
+                review_title = r.get("idea_title", "").strip().lower()
+                for idea in ideas:
+                    if idea.get("title", "").strip().lower() == review_title:
+                        approved_ideas.append(idea)
+                        break
+
+            all_approved = approved_ideas
 
         # --- Step 4: Developer attempts implementation ---
         # Take all approved ideas, heavy ones go to weekly review, low+medium get implemented now

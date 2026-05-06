@@ -111,9 +111,10 @@ class Repository:
 
     async def create_reminder(self, message: str, trigger_at: str,
                               task_id: int | None = None,
-                              repeat_interval: str = "none") -> dict:
-        sql = "INSERT INTO reminders (message, trigger_at, task_id, repeat_interval) VALUES (?, ?, ?, ?)"
-        cur = await self.db.execute(sql, (message, trigger_at, task_id, repeat_interval))
+                              repeat_interval: str = "none",
+                              adaptive_factor: float = 1.0) -> dict:
+        sql = "INSERT INTO reminders (message, trigger_at, task_id, repeat_interval, adaptive_factor) VALUES (?, ?, ?, ?, ?)"
+        cur = await self.db.execute(sql, (message, trigger_at, task_id, repeat_interval, adaptive_factor))
         await self.db.commit()
         return await self.get_reminder(cur.lastrowid)
 

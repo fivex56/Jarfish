@@ -60,6 +60,10 @@ class Database:
             await self.conn.execute("ALTER TABLE tasks ADD COLUMN reschedule_count INTEGER NOT NULL DEFAULT 0")
             await self.conn.execute("PRAGMA user_version = 5")
             await self.conn.commit()
+        if version <= 5:
+            await self.conn.execute("ALTER TABLE reminders ADD COLUMN adaptive_factor REAL NOT NULL DEFAULT 1.0")
+            await self.conn.execute("PRAGMA user_version = 6")
+            await self.conn.commit()
 
     async def close(self):
         if self.conn:

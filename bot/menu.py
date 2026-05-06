@@ -74,7 +74,8 @@ def build_task_list_keyboard(tasks: list[dict], view: str, reminders: dict[int, 
         s = STATUS_EMOJI.get(t.get("status", "todo"), "?")
         p = PRIORITY_ICONS.get(t.get("priority", 0), "")
         time_str = reminders.get(t["id"], "")
-        label = f"{s} #{t['id']}"
+        indicator = _score_indicator(t.get("score", 0))
+        label = f"{indicator} {s} #{t['id']}"
         if time_str:
             label += f" {time_str}"
         label += f" {t['title']} {p}"
@@ -769,6 +770,30 @@ async def handle_menu_callbacks(handlers, update, context):
     await query.answer()
 
 
+def _compute_score(task: dict) -> float:
+    """Score = (1 / max(days_until_due, 1)) * 0.6 + priority * 0.4"""
+    due_date = task.get("due_date") or ""
+    priority = task.get("priority", 0)
+    if due_date:
+        try:
+            due_dt = datetime.strptime(due_date.split(" ")[0], "%Y-%m-%d")
+            days_until_due = (due_dt - datetime.now()).days
+        except (ValueError, IndexError):
+            days_until_due = 999
+    else:
+        days_until_due = 999
+    return (1.0 / max(days_until_due, 1)) * 0.6 + priority * 0.4
+
+
+def _score_indicator(score: float) -> str:
+    if score > 1.5:
+        return "🔴"
+    elif score > 0.5:
+        return "🟡"
+    else:
+        return "🟢"
+
+
 async def _build_view_data(repo, view: str) -> tuple[list[dict], dict[int, str], str, str]:
     """Shared logic: fetch tasks for a view, return (tasks, times, text, view_key)."""
     if view == "today":
@@ -795,6 +820,10 @@ async def _build_view_data(repo, view: str) -> tuple[list[dict], dict[int, str],
         tasks = await repo.list_tasks(limit=50)
         subset = [t for t in tasks if t.get("status") != "cancelled"]
         title = "Все задачи"
+    # Compute score and sort
+    for t in subset:
+        t["score"] = _compute_score(t)
+    subset.sort(key=lambda t: t["score"], reverse=True)
     times = await _get_reminder_times(repo, subset)
     text = f"<b>{title} ({len(subset)}):</b>"
     return subset, times, text, view

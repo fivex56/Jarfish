@@ -95,10 +95,11 @@ class Repository:
 
     async def get_today_tasks(self) -> list[dict]:
         rows = await self.db.fetch_all(
-            """SELECT * FROM tasks
+            """SELECT *, (1.0 / MAX(julianday(due_date) - julianday('now'), 1)) * 0.6 + priority * 0.4 AS score
+               FROM tasks
                WHERE status IN ('todo', 'in_progress')
                  AND date(due_date) = date('now')
-               ORDER BY priority DESC""")
+               ORDER BY score DESC""")
         return [dict(r) for r in rows]
 
     async def search_tasks(self, keyword: str) -> list[dict]:

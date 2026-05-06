@@ -264,3 +264,55 @@ class Repository:
             "SELECT DISTINCT date(created_at) as d FROM thoughts ORDER BY d DESC LIMIT ?",
             (limit,))
         return [dict(r)["d"] for r in rows]
+
+    # ── Stats ──────────────────────────────────────────────
+
+    async def count_tasks_by_status(self) -> dict:
+        """Return counts of tasks grouped by status."""
+        rows = await self.db.fetch_all(
+            "SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status")
+        return {dict(r)["status"]: dict(r)["cnt"] for r in rows}
+
+    async def avg_completion_time_hours(self) -> float | None:
+        """Average hours between created_at and completed_at for done tasks."""
+        row = await self.db.fetch_one(
+            "SELECT AVG(julianday(completed_at) - julianday(created_at)) * 24 AS avg_hours "
+            "FROM tasks WHERE status = 'done' AND completed_at IS NOT NULL")
+        return dict(row)["avg_hours"] if row else None
+
+    async def tasks_by_day_of_week(self) -> list[dict]:
+        """Count completed tasks grouped by day of week (0=Sun, 6=Sat)."""
+        rows = await self.db.fetch_all(
+            "SELECT CAST(strftime('%w', completed_at) AS INTEGER) AS dow, COUNT(*) AS cnt "
+            "FROM tasks WHERE status = 'done' AND completed_at IS NOT NULL "
+            "GROUP BY dow ORDER BY dow")
+        return [dict(r) for r in rows]
+
+    async def tasks_by_hour_of_day(self) -> list[dict]:
+        """Count completed tasks grouped by hour of day (0-23)."""
+        rows = await self.db.fetch_all(
+            "SELECT CAST(strftime('%H', completed_at) AS INTEGER) AS hour, COUNT(*) AS cnt "
+            "FROM tasks WHERE status = 'done' AND completed_at IS NOT NULL "
+            "GROUP BY hour ORDER BY hour")
+        return [dict(r) for r in rows]
+
+    async def completion_timeline(self, limit: int = 90) -> list[dict]:
+        """Daily completion counts for the last N days."""
+        rows = await self.db.fetch_all(
+            "SELECT date(completed_at) AS day, COUNT(*) AS cnt "
+            "FROM tasks WHERE status = 'done' AND completed_at IS NOT NULL "
+            "GROUP BY day ORDER BY day ASC LIMIT ?", (limit,))
+        return [dict(r) for r in rows]
+
+    async def count_overdue_tasks(self) -> int:
+        row = await self.db.fetch_one(
+            "SELECT COUNT(*) AS cnt FROM v_overdue_tasks")
+        return dict(row)["cnt"] if row else 0
+
+    async def reschedule_stats(self) -> dict:
+        """Average reschedule count and total rescheduled tasks."""
+        row = await self.db.fetch_one(
+            "SELECT COUNT(*) AS total_with_reschedules, "
+            "AVG(reschedule_count) AS avg_reschedules "
+            "FROM tasks WHERE reschedule_count > 0")
+        return dict(row) if row else {"total_with_reschedules": 0, "avg_reschedules": 0}

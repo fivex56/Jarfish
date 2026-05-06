@@ -23,6 +23,7 @@ class CommandProcessor:
             f"/notes — поиск по заметкам\n"
             f"/summary — сводка на сегодня\n"
             f"/overdue — просроченные задачи\n"
+            f"/stats — аналитика продуктивности\n"
             f"/help — помощь"
         )
 
@@ -44,6 +45,8 @@ class CommandProcessor:
             f"  Сводка на сегодня: задачи, настроение, статистика\n\n"
             f"/overdue\n"
             f"  Просроченные задачи\n\n"
+            f"/stats\n"
+            f"  Аналитика продуктивности: графики, скорость, лучшие дни\n\n"
 
             f"{bold('Проекты')}\n"
             f"/project_add {code('Название [Описание]')}\n"
@@ -322,3 +325,11 @@ class CommandProcessor:
         for i, t in enumerate(overdue, 1):
             lines.append(format_task(t, i))
         return "\n".join(lines)
+
+    async def stats(self) -> tuple[str, str | None]:
+        """Generate productivity analytics report. Returns (text, chart_png_path)."""
+        from services.stats_service import StatsService
+        svc = StatsService(self.repo)
+        text = await svc.generate_report()
+        chart_path = await svc.generate_chart_png()
+        return text, chart_path

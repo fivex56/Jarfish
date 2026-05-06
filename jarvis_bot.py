@@ -125,10 +125,12 @@ async def handle_cli_input(cli_queue, processor, out_queue, repo, bot, user_id):
                 "notes": lambda: processor.notes(args),
                 "summary": processor.summary,
                 "overdue": processor.overdue,
+                "stats": processor.stats,
             }
             handler = cmd_map.get(cmd)
             if handler:
-                response = await handler()
+                result = await handler()
+                response = result[0] if isinstance(result, tuple) else result
             else:
                 response = f"Неизвестная команда: {cmd}. /help для списка команд"
         else:

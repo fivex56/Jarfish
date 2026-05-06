@@ -229,6 +229,18 @@ class BotHandlers:
         text = await self.processor.overdue()
         await self._respond(update, text)
 
+    async def handle_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.is_allowed(update.effective_user.id):
+            return
+        await update.message.reply_text("Собираю аналитику...")
+        text, chart_path = await self.processor.stats()
+        await self._respond(update, text)
+        # Send chart as photo if generated
+        if chart_path and os.path.exists(chart_path):
+            with open(chart_path, "rb") as f:
+                await update.message.reply_photo(f, caption="📊 График продуктивности")
+            os.unlink(chart_path)
+
     async def handle_overdue_reschedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle inline keyboard actions for overdue task rescheduling."""
         from datetime import datetime, timedelta
@@ -816,6 +828,7 @@ class BotHandlers:
         app.add_handler(CommandHandler("notes", self.handle_notes))
         app.add_handler(CommandHandler("summary", self.handle_summary))
         app.add_handler(CommandHandler("overdue", self.handle_overdue))
+        app.add_handler(CommandHandler("stats", self.handle_stats))
         app.add_handler(CommandHandler("voice_on", self.handle_voice_on))
         app.add_handler(CommandHandler("voice_off", self.handle_voice_off))
         app.add_handler(CommandHandler("cycle", self.handle_cycle))

@@ -278,6 +278,7 @@ async def main():
             deepseek_key, str(Path(__file__).parent), repo,
             bot_to_cli, config["allowed_user_id"]
         )
+        app.bot_data["orchestrator"] = orchestrator
 
         async def biweekly_cycle(context):
             await orchestrator.run_cycle()

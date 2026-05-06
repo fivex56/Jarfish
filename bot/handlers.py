@@ -1,5 +1,6 @@
 import logging
 import os
+from pathlib import Path
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters
@@ -237,6 +238,19 @@ class BotHandlers:
         msg = update.message.text.strip()
         if not msg or msg.startswith("/"):
             return
+
+        # Check if this is an idea approval message (numbers only, pending ideas exist)
+        pending_path = Path(".") / ".pending_ideas.json"
+        if pending_path.exists():
+            # Check if message looks like numbers: "1 2 4" or "1,2,4"
+            cleaned = msg.replace(",", " ").replace(".", " ").strip()
+            parts = cleaned.split()
+            if parts and all(p.isdigit() for p in parts):
+                orch = context.application.bot_data.get("orchestrator")
+                if orch:
+                    result = await orch.continue_after_approval(msg)
+                    await self._respond(update, result if result != "ok" else "Принято, запускаю обработку...")
+                    return
 
         # Check if user is in edit mode
         if self._edit_state.get(update.effective_user.id):

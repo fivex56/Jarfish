@@ -239,6 +239,9 @@ class IdeaOrchestrator:
                     status="completed"
                 )
 
+                # Update README changelog with this implementation
+                await self._update_readme_changelog(idea)
+
                 # Try to commit if there are actual changes
                 try:
                     import subprocess
@@ -393,3 +396,69 @@ class IdeaOrchestrator:
                         )
         except Exception as e:
             logger.error(f"Failed to send agent TG message: {e}")
+
+    async def _update_readme_changelog(self, idea: dict):
+        """Update README.md changelog with the implemented idea, then commit and push."""
+        try:
+            readme_path = Path(self.project_root) / "README.md"
+            if not readme_path.exists():
+                return
+
+            title = idea.get("title", "unknown")
+            what = idea.get("what", "")[:150]
+
+            lines = readme_path.read_text(encoding="utf-8").splitlines()
+            today = datetime.now().strftime("%Y-%m-%d")
+
+            new_lines = []
+            inserted = False
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                new_lines.append(line)
+
+                if "<!-- CHANGELOG_START -->" in line and not inserted:
+                    inserted = True
+                    i += 1
+                    # Skip empty lines after the marker
+                    while i < len(lines) and lines[i].strip() == "":
+                        new_lines.append(lines[i])
+                        i += 1
+
+                    # Find existing date section for today, or insert new one
+                    found_date = False
+                    date_header = f"### {today}"
+                    # Check if today already has a section
+                    remaining = lines[i:]
+                    for j, rl in enumerate(remaining):
+                        if rl.startswith("### ") and today in rl:
+                            found_date = True
+                            break
+                        if "<!-- CHANGELOG_END -->" in rl:
+                            break
+
+                    if not found_date:
+                        new_lines.append("")
+                        new_lines.append(date_header)
+
+                    new_lines.append(f"* {title} — {what}")
+                    continue
+
+                i += 1
+
+            if inserted:
+                readme_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+                # Commit and push
+                import subprocess
+                root = str(Path(self.project_root))
+                subprocess.run(["git", "add", "README.md"], cwd=root,
+                              capture_output=True, timeout=15)
+                msg = f"📝 README: {title}"
+                subprocess.run(["git", "commit", "-m", msg],
+                              cwd=root, capture_output=True, timeout=15)
+                subprocess.run(["git", "push"], cwd=root,
+                              capture_output=True, timeout=15)
+                logger.info(f"README changelog updated: {title}")
+        except Exception as e:
+            logger.warning(f"Failed to update README changelog: {e}")

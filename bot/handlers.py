@@ -37,6 +37,7 @@ class BotHandlers:
         self._pending_intents = {}  # user_id -> parsed dict awaiting confirmation
         self._edit_state = {}      # user_id -> edit state dict
         self._voice_mode = self._load_voice_settings()  # user_id -> bool, persisted
+        self._last_entity = {}     # user_id -> {"type": "task", "id": 123}
 
     def _load_voice_settings(self) -> dict:
         """Load voice mode preference from disk."""
@@ -139,6 +140,12 @@ class BotHandlers:
         args = update.message.text.split(maxsplit=1)[1] if len(update.message.text.split()) > 1 else ""
         text = await self.processor.task_add(args)
         await self._respond(update, text)
+        # Extract task ID from formatted response and store for linking
+        import re
+        m = re.search(r'#(\d+)', text)
+        if m:
+            self._last_entity[update.effective_user.id] = {"type": "task", "id": int(m.group(1))}
+            await self._suggest_thought_links(update, args, "task")
 
     async def handle_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_allowed(update.effective_user.id):
@@ -209,6 +216,12 @@ class BotHandlers:
         args = update.message.text.split(maxsplit=1)[1] if len(update.message.text.split()) > 1 else ""
         text = await self.processor.note(args)
         await self._respond(update, text)
+        # Extract note ID from formatted response and store for linking
+        import re
+        m = re.search(r'#(\d+)', text)
+        if m:
+            self._last_entity[update.effective_user.id] = {"type": "note", "id": int(m.group(1))}
+            await self._suggest_thought_links(update, args, "note")
 
     async def handle_notes(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_allowed(update.effective_user.id):
@@ -785,6 +798,111 @@ class BotHandlers:
             logger.error(f"Failed to fetch reminders for query: {e}")
 
         return "\n".join(lines) if lines else None
+
+    async def handle_link_thought(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle inline button: link a thought to a task or note."""
+        query = update.callback_query
+        user_id = update.effective_user.id
+
+        if not self.is_allowed(user_id):
+            await query.answer("Нет доступа")
+            return
+
+        # Parse callback data: link_thought_{entity_type}_{entity_id}_{thought_id}
+        data = query.data
+        try:
+            parts = data.split("_", 4)  # ["link", "thought", type, entity_id, thought_id]
+            entity_type = parts[2]
+            entity_id = int(parts[3])
+            thought_id = int(parts[4])
+        except (IndexError, ValueError):
+            await query.answer("Неверные данные")
+            return
+
+        thought = await self.processor.repo.get_thought(thought_id)
+        if not thought:
+            await query.answer("Мысль не найдена")
+            return
+
+        thought_preview = (thought.get("content") or "[без текста]")[:200]
+        ref = f"\n\n💭 Связанная мысль (#{thought_id}): {thought_preview}"
+
+        if entity_type == "task":
+            task = await self.processor.repo.get_task(entity_id)
+            if not task:
+                await query.answer("Задача не найдена")
+                return
+            new_desc = (task.get("description") or "") + ref
+            await self.processor.repo.update_task(entity_id, description=new_desc)
+            await query.edit_message_text(
+                f"✅ Мысль #{thought_id} привязана к задаче #{entity_id}\n\n"
+                f"<i>{thought_preview[:120]}</i>",
+                parse_mode="HTML"
+            )
+        elif entity_type == "note":
+            note = await self.processor.repo.get_note(entity_id)
+            if not note:
+                await query.answer("Заметка не найдена")
+                return
+            new_content = (note.get("content") or "") + ref
+            await self.processor.repo.update_note(entity_id, content=new_content)
+            await query.edit_message_text(
+                f"✅ Мысль #{thought_id} привязана к заметке #{entity_id}\n\n"
+                f"<i>{thought_preview[:120]}</i>",
+                parse_mode="HTML"
+            )
+        else:
+            await query.answer("Неизвестный тип")
+            return
+
+        await query.answer()
+
+    async def _suggest_thought_links(self, update: Update, text: str, entity_type: str):
+        """Search thoughts for keywords from text and suggest linking if matches found."""
+        import re
+        if not text or not text.strip():
+            return
+
+        # Extract meaningful keywords (words > 3 chars, non-numeric, non-special)
+        stop_words = {"это", "что", "как", "для", "про", "надо", "наша", "этот", "буду"}
+        words = re.findall(r'[а-яёa-z]{4,}', text.lower())
+        keywords = [w for w in words if w not in stop_words][:5]
+
+        if not keywords:
+            return
+
+        # Search thoughts for each keyword, collect unique matches
+        matched = {}
+        for kw in keywords[:3]:  # limit to 3 keywords to keep it fast
+            thoughts = await self.processor.repo.search_thoughts(kw, limit=3)
+            for t in thoughts:
+                if t["id"] not in matched:
+                    matched[t["id"]] = t
+
+        if not matched:
+            return
+
+        # Build suggestion with inline buttons
+        entity = self._last_entity.get(update.effective_user.id, {})
+        entity_id = entity.get("id", 0)
+
+        lines = ["💡 <b>Похожие мысли в ленте:</b>"]
+        buttons = []
+        for thought_id, thought in list(matched.items())[:4]:
+            preview = (thought.get("content") or "[без текста]")[:80]
+            lines.append(f"  • {preview}")
+            buttons.append([
+                InlineKeyboardButton(
+                    f"🔗 Привязать мысль #{thought_id}",
+                    callback_data=f"link_thought_{entity_type}_{entity_id}_{thought_id}"
+                )
+            ])
+
+        await update.message.reply_text(
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode="HTML"
+        )
 
     async def _respond(self, update: Update, text: str):
         """Send text or voice response depending on voice_mode setting."""

@@ -259,6 +259,12 @@ class Repository:
             (parent_id, parent_id))
         return [dict(r) for r in rows]
 
+    async def search_thoughts(self, keyword: str, limit: int = 5) -> list[dict]:
+        rows = await self.db.fetch_all(
+            "SELECT * FROM thoughts WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?",
+            (f"%{keyword}%", limit))
+        return [dict(r) for r in rows]
+
     async def get_thought_dates(self, limit: int = 14) -> list[str]:
         rows = await self.db.fetch_all(
             "SELECT DISTINCT date(created_at) as d FROM thoughts ORDER BY d DESC LIMIT ?",

@@ -13,6 +13,7 @@ from bot.menu import (
     handle_menu_callbacks, handle_edit_input, format_task_list
 )
 from db.repository import Repository
+from services.calendar_service import CalendarAuthError
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class BotHandlers:
                  out_queue, cli_queue, job_queue=None,
                  speech_service=None, vision_service=None,
                  nl_parser=None, calendar_service=None):
-        self.processor = CommandProcessor(repo, allowed_user_id)
+        self.processor = CommandProcessor(repo, allowed_user_id, calendar_service)
         self.allowed_user_id = allowed_user_id
         self.out_queue = out_queue
         self.cli_queue = cli_queue
@@ -146,15 +147,18 @@ class BotHandlers:
         if m:
             self._last_entity[update.effective_user.id] = {"type": "task", "id": int(m.group(1))}
             await self._suggest_thought_links(update, args, "task")
+        # Sync to Google Calendar
+        await self._sync_new_to_calendar(self.processor.repo)
 
     async def handle_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_allowed(update.effective_user.id):
             return
         tasks = await self.processor.repo.list_tasks(limit=50)
-        text = format_task_list(tasks, "Все задачи")
+        active = [t for t in tasks if t.get("status") not in ("cancelled", "done")]
+        text = format_task_list(active, "Активные задачи")
         await update.message.reply_text(
             text,
-            reply_markup=build_task_list_keyboard(tasks, "all"),
+            reply_markup=build_task_list_keyboard(active, "all"),
             parse_mode="HTML"
         )
 
@@ -164,6 +168,17 @@ class BotHandlers:
         args = update.message.text.split(maxsplit=1)[1] if len(update.message.text.split()) > 1 else ""
         text = await self.processor.task_done(args)
         await self._respond(update, text)
+        # Sync done status to calendar event
+        if self.calendar and self.calendar.is_authorized():
+            try:
+                import re
+                m = re.search(r'#(\d+)', text)
+                if m:
+                    task = await self.processor.repo.get_task(int(m.group(1)))
+                    if task and task.get("calendar_event_id"):
+                        await self.calendar.sync_task_status_to_calendar(self.processor.repo, task)
+            except Exception as e:
+                logger.error(f"Calendar status sync on task_done failed: {e}")
 
     async def handle_task_edit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_allowed(update.effective_user.id):
@@ -171,6 +186,17 @@ class BotHandlers:
         args = update.message.text.split(maxsplit=1)[1] if len(update.message.text.split()) > 1 else ""
         text = await self.processor.task_edit(args)
         await self._respond(update, text)
+        # Update calendar event if due_date changed
+        if self.calendar and self.calendar.is_authorized():
+            try:
+                import re
+                m = re.search(r'#(\d+)', text)
+                if m:
+                    task = await self.processor.repo.get_task(int(m.group(1)))
+                    if task and task.get("due_date"):
+                        await self.calendar.update_task_event(self.processor.repo, task)
+            except Exception as e:
+                logger.error(f"Calendar update on task_edit failed: {e}")
 
     async def handle_project_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_allowed(update.effective_user.id):
@@ -253,6 +279,113 @@ class BotHandlers:
             with open(chart_path, "rb") as f:
                 await update.message.reply_photo(f, caption="📊 График продуктивности")
             os.unlink(chart_path)
+
+    async def handle_calendar(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.is_allowed(update.effective_user.id):
+            return
+        if not self.calendar:
+            await update.message.reply_text("Календарь не подключён. Нужен Google OAuth.")
+            return
+
+        await update.message.reply_text("Смотрю календарь...")
+        try:
+            events = await self.calendar.list_events(days=14, max_results=15)
+        except CalendarAuthError:
+            await update.message.reply_text(
+                "Google Календарь не авторизован. Отправь /calendar_auth чтобы получить ссылку для входа."
+            )
+            return
+        except Exception as e:
+            logger.error(f"Calendar fetch failed: {e}")
+            await update.message.reply_text("Не смог получить события календаря. Попробуй позже.")
+            return
+
+        if not events:
+            await update.message.reply_text("Ближайших событий в календаре нет.")
+            return
+
+        lines = [f"📅 <b>Календарь на 14 дней</b> ({len(events)} событий)\n"]
+        for i, ev in enumerate(events, 1):
+            start = ev.get("start", {})
+            start_str = start.get("dateTime") or start.get("date") or "?"
+            # Convert ISO datetime to readable format
+            try:
+                from datetime import datetime as dt
+                dt_obj = dt.fromisoformat(start_str)
+                start_str = dt_obj.strftime("%d.%m %H:%M")
+            except Exception:
+                pass
+            summary = ev.get("summary", "Без названия")
+            location = ev.get("location", "")
+            loc_str = f" 📍{location}" if location else ""
+            lines.append(f"{i}. <b>{summary}</b>{loc_str} — {start_str}")
+
+        text = "\n".join(lines)
+        for chunk in split_long_message(text):
+            await self._respond(update, chunk)
+
+    async def handle_calendar_auth(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.is_allowed(update.effective_user.id):
+            return
+        if not self.calendar:
+            await update.message.reply_text("Календарь не подключён. Нет oauth_google.json.")
+            return
+
+        if self.calendar.is_authorized():
+            await update.message.reply_text("Календарь уже авторизован. Используй /calendar для просмотра.")
+            return
+
+        url = self.calendar.get_auth_url()
+        if not url:
+            await update.message.reply_text("Не могу создать ссылку для авторизации. Проверь oauth_google.json.")
+            return
+
+        await update.message.reply_text(
+            f"Открой ссылку в браузере:\n{url}\n\n"
+            f"После авторизации браузер попытается открыть localhost (это нормально что страница не загрузится). "
+            f"Скопируй параметр 'code' из адресной строки (всё после 'code=' и до '&scope') "
+            f"и отправь его командой:\n/calendar_code <код>"
+        )
+
+    async def handle_calendar_code(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.is_allowed(update.effective_user.id):
+            return
+        if not self.calendar:
+            await update.message.reply_text("Календарь не подключён.")
+            return
+
+        code = update.message.text.strip()
+        # Remove /calendar_code prefix
+        code = code.replace("/calendar_code", "").strip()
+        if not code:
+            await update.message.reply_text("Укажи код: /calendar_code <code>")
+            return
+
+        await update.message.reply_text("Авторизую...")
+        if self.calendar.complete_auth(code):
+            await update.message.reply_text("Готово! Google Календарь подключён. Можешь использовать /calendar.")
+        else:
+            await update.message.reply_text("Не удалось авторизоваться. Попробуй /calendar_auth заново.")
+
+    async def handle_calendar_export(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.is_allowed(update.effective_user.id):
+            return
+        if not self.calendar or not self.calendar.is_authorized():
+            await update.message.reply_text("Календарь не подключён. Сначала /calendar_auth.")
+            return
+
+        await update.message.reply_text("Экспортирую задачи и напоминания в календарь...")
+        try:
+            repo = context.application.bot_data["repo"]
+            result = await self.calendar.sync_all_to_calendar(repo)
+            await update.message.reply_text(
+                f"Готово! Добавлено в календарь:\n"
+                f"• Задач: {result['tasks']}\n"
+                f"• Напоминаний: {result['reminders']}"
+            )
+        except Exception as e:
+            logger.error(f"Calendar export failed: {e}")
+            await update.message.reply_text("Не удалось выполнить экспорт. Попробуй позже.")
 
     async def handle_overdue_reschedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle inline keyboard actions for overdue task rescheduling."""
@@ -736,6 +869,10 @@ class BotHandlers:
             except Exception as e:
                 logger.error(f"Failed to create reminder: {e}")
 
+        # Sync new tasks/reminders to Google Calendar
+        if parsed.get("tasks") or parsed.get("reminders") or parsed.get("calendar_events"):
+            await self._sync_new_to_calendar(self.processor.repo)
+
         # Save notes
         for note_text in parsed.get("notes", []):
             try:
@@ -928,6 +1065,15 @@ class BotHandlers:
             await self.out_queue.put({"text": part, "source": "jarvis"})
             await self.processor.repo.save_message("out", part, "jarvis")
 
+    async def _sync_new_to_calendar(self, repo):
+        """Export newly created tasks/reminders to Google Calendar if authorized."""
+        if not self.calendar or not self.calendar.is_authorized():
+            return
+        try:
+            await self.calendar.sync_all_to_calendar(repo)
+        except Exception as e:
+            logger.error(f"Calendar auto-sync failed: {e}")
+
     def register(self, app):
         """Register all handlers on the PTB Application."""
         app.add_handler(CommandHandler("start", self.handle_start))
@@ -947,6 +1093,10 @@ class BotHandlers:
         app.add_handler(CommandHandler("summary", self.handle_summary))
         app.add_handler(CommandHandler("overdue", self.handle_overdue))
         app.add_handler(CommandHandler("stats", self.handle_stats))
+        app.add_handler(CommandHandler("calendar", self.handle_calendar))
+        app.add_handler(CommandHandler("calendar_auth", self.handle_calendar_auth))
+        app.add_handler(CommandHandler("calendar_code", self.handle_calendar_code))
+        app.add_handler(CommandHandler("calendar_export", self.handle_calendar_export))
         app.add_handler(CommandHandler("voice_on", self.handle_voice_on))
         app.add_handler(CommandHandler("voice_off", self.handle_voice_off))
         app.add_handler(CommandHandler("cycle", self.handle_cycle))

@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     due_date        TEXT,
     tags            TEXT DEFAULT '',
     emoji           TEXT DEFAULT '',
+    calendar_event_id TEXT DEFAULT '',
     reschedule_count INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
@@ -35,6 +36,8 @@ CREATE TABLE IF NOT EXISTS reminders (
     trigger_at      TEXT NOT NULL,
     repeat_interval TEXT DEFAULT 'none',
     is_sent         INTEGER NOT NULL DEFAULT 0,
+    adaptive_factor  REAL NOT NULL DEFAULT 1.0,
+    calendar_event_id TEXT DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

@@ -41,10 +41,11 @@ class Repository:
 
     async def create_task(self, title: str, project_id: int | None = None,
                           description: str = "", priority: int = 0,
-                          due_date: str | None = None, tags: str = "") -> dict:
-        sql = """INSERT INTO tasks (title, project_id, description, priority, due_date, tags)
-                 VALUES (?, ?, ?, ?, ?, ?)"""
-        cur = await self.db.execute(sql, (title, project_id, description, priority, due_date, tags))
+                          due_date: str | None = None, tags: str = "",
+                          calendar_event_id: str = "") -> dict:
+        sql = """INSERT INTO tasks (title, project_id, description, priority, due_date, tags, calendar_event_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)"""
+        cur = await self.db.execute(sql, (title, project_id, description, priority, due_date, tags, calendar_event_id))
         await self.db.commit()
         return await self.get_task(cur.lastrowid)
 
@@ -85,6 +86,23 @@ class Repository:
             (new_due_date, task_id))
         await self.db.commit()
         return await self.get_task(task_id)
+
+    async def find_task_by_calendar_event_id(self, calendar_event_id: str) -> dict | None:
+        row = await self.db.fetch_one(
+            "SELECT * FROM tasks WHERE calendar_event_id = ?", (calendar_event_id,))
+        return dict(row) if row else None
+
+    async def upsert_task(self, calendar_event_id: str, title: str,
+                          description: str = "", due_date: str = "",
+                          priority: int = 0, tags: str = "") -> dict:
+        existing = await self.find_task_by_calendar_event_id(calendar_event_id)
+        if existing:
+            await self.update_task(existing["id"], title=title, description=description,
+                                   due_date=due_date, priority=priority, tags=tags)
+            return await self.get_task(existing["id"])
+        return await self.create_task(title=title, description=description,
+                                      due_date=due_date, priority=priority, tags=tags,
+                                      calendar_event_id=calendar_event_id)
 
     async def cancel_task(self, task_id: int) -> dict | None:
         return await self.update_task(task_id, status="cancelled")

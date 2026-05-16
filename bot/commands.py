@@ -1,11 +1,13 @@
+from datetime import datetime
 from db.repository import Repository
 from bot.formatting import bold, code, format_task, format_project, format_reminder, format_note
 
 
 class CommandProcessor:
-    def __init__(self, repo: Repository, allowed_user_id: int):
+    def __init__(self, repo: Repository, allowed_user_id: int, calendar_service=None):
         self.repo = repo
         self.allowed_user_id = allowed_user_id
+        self.calendar = calendar_service
 
     async def start(self) -> str:
         return (
@@ -24,6 +26,9 @@ class CommandProcessor:
             f"/summary — сводка на сегодня\n"
             f"/overdue — просроченные задачи\n"
             f"/stats — аналитика продуктивности\n"
+            f"/calendar — события календаря\n"
+            f"/calendar_auth — подключить Google Календарь\n"
+            f"/calendar_export — экспорт задач в календарь\n"
             f"/help — помощь"
         )
 
@@ -47,6 +52,19 @@ class CommandProcessor:
             f"  Просроченные задачи\n\n"
             f"/stats\n"
             f"  Аналитика продуктивности: графики, скорость, лучшие дни\n\n"
+
+            f"{bold('Календарь')}\n"
+            f"/calendar\n"
+            f"  Показать ближайшие события из Google Календаря\n\n"
+            f"/calendar_auth\n"
+            f"  Подключить Google Календарь (нужен oauth_google.json)\n\n"
+            f"/calendar_export\n"
+            f"  Экспортировать все задачи с дедлайном в Google Календарь\n\n"
+            f"{bold('Синхронизация:')}\n"
+            f"  • События календаря → задачи с дедлайном за час до начала\n"
+            f"  • Отмена события → отмена связанной задачи\n"
+            f"  • Выполнение задачи → пометка события в календаре ✅\n"
+            f"  • Отмена задачи → удаление события из календаря\n\n"
 
             f"{bold('Проекты')}\n"
             f"/project_add {code('Название [Описание]')}\n"
@@ -333,3 +351,28 @@ class CommandProcessor:
         text = await svc.generate_report()
         chart_path = await svc.generate_chart_png()
         return text, chart_path
+
+    async def calendar(self) -> str:
+        """Show upcoming calendar events."""
+        if not self.calendar:
+            return "Календарь не подключён. Нужен Google OAuth."
+        try:
+            events = await self.calendar.list_events(days=14, max_results=15)
+        except Exception as e:
+            return f"Не смог получить события календаря: {e}"
+
+        if not events:
+            return "Ближайших событий в календаре нет."
+
+        lines = [f"📅 Календарь на 14 дней ({len(events)} событий)\n"]
+        for i, ev in enumerate(events, 1):
+            start_str = ev.get("start", {}).get("dateTime") or ev.get("start", {}).get("date") or "?"
+            try:
+                dt_obj = datetime.fromisoformat(start_str)
+                start_str = dt_obj.strftime("%d.%m %H:%M")
+            except Exception:
+                pass
+            summary = ev.get("summary", "Без названия")
+            lines.append(f"{i}. {summary} — {start_str}")
+
+        return "\n".join(lines)

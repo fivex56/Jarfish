@@ -126,6 +126,7 @@ async def handle_cli_input(cli_queue, processor, out_queue, repo, bot, user_id):
                 "summary": processor.summary,
                 "overdue": processor.overdue,
                 "stats": processor.stats,
+                "calendar": processor.calendar,
             }
             handler = cmd_map.get(cmd)
             if handler:
@@ -202,6 +203,53 @@ async def main():
     # Start proactive services (morning/evening briefings, overdue checks)
     proactive = ProactiveService(app.job_queue, repo, bot_to_cli, None)
     proactive.schedule_all(config["allowed_user_id"])
+
+    # Calendar sync: create tasks from Google Calendar events (every hour)
+    if calendar_service:
+        async def calendar_sync(context):
+            try:
+                db_repo = context.application.bot_data["repo"]
+                new_tasks = await calendar_service.sync_events_to_tasks(db_repo)
+                if new_tasks:
+                    user_id = context.application.bot_data["user_id"]
+                    # Show details of new tasks
+                    lines = ["📅 Новые задачи из календаря:"]
+                    for t in new_tasks:
+                        due = t.get("due_date", "")
+                        title = t.get("title", "").replace("📅 ", "")
+                        lines.append(f"• {title} — {due}" if due else f"• {title}")
+                    text = "\n".join(lines)
+                    await context.bot.send_message(chat_id=user_id, text=text)
+                    logger.info(f"Calendar sync: {len(new_tasks)} new tasks created")
+            except Exception as e:
+                logger.error(f"Calendar sync failed: {e}")
+
+        app.job_queue.run_repeating(
+            calendar_sync,
+            interval=3600,  # every hour
+            first=10,       # 10 seconds after startup
+            name="calendar_sync"
+        )
+        logger.info("Calendar sync (events->tasks) scheduled every hour")
+
+        # Reverse sync: export tasks/reminders to Google Calendar (every 30 min)
+        async def task_to_calendar_sync(context):
+            try:
+                db_repo = context.application.bot_data["repo"]
+                if calendar_service.is_authorized():
+                    result = await calendar_service.sync_all_to_calendar(db_repo)
+                    if result["tasks"] or result["reminders"]:
+                        logger.info(f"Task→calendar sync: {result['tasks']} tasks, {result['reminders']} reminders")
+            except Exception as e:
+                logger.error(f"Task→calendar sync failed: {e}")
+
+        app.job_queue.run_repeating(
+            task_to_calendar_sync,
+            interval=1800,  # every 30 minutes
+            first=30,       # 30 seconds after startup
+            name="task_to_calendar_sync"
+        )
+        logger.info("Task→calendar sync scheduled every 30 minutes")
 
     # Midnight rollover: move unfinished tasks from yesterday to today
     async def midnight_rollover(context):

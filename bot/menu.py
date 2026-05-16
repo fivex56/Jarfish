@@ -380,9 +380,15 @@ async def handle_menu_callbacks(handlers, update, context):
             task_id = int(parts[1])
             view = parts[2] if len(parts) > 2 else "all"
             await repo.update_task(task_id, status="done")
+            # Sync done status to calendar event
+            task = await repo.get_task(task_id)
+            if task and task.get("calendar_event_id") and handlers.calendar and handlers.calendar.is_authorized():
+                try:
+                    await handlers.calendar.sync_task_status_to_calendar(repo, task)
+                except Exception as e:
+                    logger.error(f"Calendar status sync on task complete failed: {e}")
             await query.answer("Выполнено!")
             # Refresh the detail view
-            task = await repo.get_task(task_id)
             if task:
                 await query.edit_message_text(
                     format_task_detail(task),
@@ -398,6 +404,12 @@ async def handle_menu_callbacks(handlers, update, context):
             task = await repo.get_task(task_id)
             title = task["title"] if task else f"#{task_id}"
             await repo.update_task(task_id, status="cancelled")
+            # Sync cancelled status to calendar
+            if task and task.get("calendar_event_id") and handlers.calendar and handlers.calendar.is_authorized():
+                try:
+                    await handlers.calendar.sync_task_status_to_calendar(repo, task)
+                except Exception as e:
+                    logger.error(f"Calendar status sync on task delete failed: {e}")
             await query.answer(f"Удалено: {title}")
             # Go back to the list
             await _show_view(query, repo, view)
@@ -895,8 +907,8 @@ async def _build_view_data(repo, view: str) -> tuple[list[dict], dict[int, str],
         title = f"{proj['name']} — задачи" if proj else "Задачи проекта"
     else:
         tasks = await repo.list_tasks(limit=50)
-        subset = [t for t in tasks if t.get("status") != "cancelled"]
-        title = "Все задачи"
+        subset = [t for t in tasks if t.get("status") not in ("cancelled", "done")]
+        title = "Активные задачи"
     # Compute score and sort
     for t in subset:
         t["score"] = _compute_score(t)

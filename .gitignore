@@ -8,6 +8,7 @@ jarvis.db
 jarvis.db-shm
 jarvis.db-wal
 jarvis.log
+*.log
 thoughts_images/
 
 # Python
